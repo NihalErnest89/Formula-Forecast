@@ -213,6 +213,99 @@ def calculate_constructor_standing(driver_results: pd.DataFrame) -> Dict[str, in
     return constructor_standing_dict
 
 
+def calculate_recent_grid_avg(driver_results: pd.DataFrame, num_races: int = 5) -> Dict[str, float]:
+    """
+    Calculate recent average grid position (qualifying performance).
+    
+    Args:
+        driver_results: DataFrame with race results, sorted by RoundNumber
+        num_races: Number of recent races to consider (default: 5)
+        
+    Returns:
+        Dictionary mapping driver numbers to recent average grid position
+    """
+    recent_grid_dict = {}
+    
+    # Sort by round number to get most recent races
+    driver_results = driver_results.sort_values('RoundNumber', ascending=False)
+    
+    for driver_num in driver_results['DriverNumber'].unique():
+        driver_races = driver_results[driver_results['DriverNumber'] == driver_num]
+        # Get last N races
+        recent_races = driver_races.head(num_races)
+        valid_grid = recent_races['GridPosition'].dropna()
+        if len(valid_grid) > 0:
+            recent_grid_dict[str(driver_num)] = valid_grid.mean()
+        else:
+            recent_grid_dict[str(driver_num)] = np.nan
+    
+    return recent_grid_dict
+
+
+def calculate_constructor_recent_form(driver_results: pd.DataFrame, num_races: int = 5) -> Dict[str, float]:
+    """
+    Calculate constructor's recent form (average finish position of both drivers in last N races).
+    
+    Args:
+        driver_results: DataFrame with race results, sorted by RoundNumber
+        num_races: Number of recent races to consider (default: 5)
+        
+    Returns:
+        Dictionary mapping constructor names to recent average finish position
+    """
+    constructor_form_dict = {}
+    
+    # Sort by round number to get most recent races
+    driver_results = driver_results.sort_values('RoundNumber', ascending=False)
+    
+    # Group by constructor
+    if 'TeamName' in driver_results.columns:
+        for constructor in driver_results['TeamName'].unique():
+            constructor_races = driver_results[driver_results['TeamName'] == constructor]
+            # Get last N races (across both drivers)
+            recent_races = constructor_races.head(num_races * 2)  # *2 because 2 drivers per team
+            valid_positions = recent_races['Position'].dropna()
+            if len(valid_positions) > 0:
+                constructor_form_dict[constructor] = valid_positions.mean()
+            else:
+                constructor_form_dict[constructor] = np.nan
+    else:
+        # Fallback: use constructor from driver number mapping if available
+        # For now, return empty dict
+        pass
+    
+    return constructor_form_dict
+
+
+def calculate_recent_form(driver_results: pd.DataFrame, num_races: int = 5) -> Dict[str, float]:
+    """
+    Calculate recent form (average finish position in last N races).
+    
+    Args:
+        driver_results: DataFrame with race results, sorted by RoundNumber
+        num_races: Number of recent races to consider (default: 5)
+        
+    Returns:
+        Dictionary mapping driver numbers to recent average finish position
+    """
+    recent_form_dict = {}
+    
+    # Sort by round number to get most recent races
+    driver_results = driver_results.sort_values('RoundNumber', ascending=False)
+    
+    for driver_num in driver_results['DriverNumber'].unique():
+        driver_races = driver_results[driver_results['DriverNumber'] == driver_num]
+        # Get last N races
+        recent_races = driver_races.head(num_races)
+        valid_positions = recent_races['Position'].dropna()
+        if len(valid_positions) > 0:
+            recent_form_dict[str(driver_num)] = valid_positions.mean()
+        else:
+            recent_form_dict[str(driver_num)] = np.nan
+    
+    return recent_form_dict
+
+
 def calculate_track_avg_position(driver_results: pd.DataFrame, track_name: str) -> Dict[str, float]:
     """
     Calculate historical average position for each driver at a specific track.
@@ -371,6 +464,24 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 # Try alternative column names
                 grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
             
+            # Recent form (last 5 races average finish) - captures current momentum
+            if round_num == 1:
+                # First race: use previous season's recent form
+                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                if not prev_year_data.empty:
+                    recent_form = calculate_recent_form(prev_year_data, num_races=5)
+                    driver_recent_form = recent_form.get(driver_num, np.nan)
+                else:
+                    driver_recent_form = np.nan
+            else:
+                # Use races from current season up to (but not including) this race
+                races_up_to_now = year_data[year_data['RoundNumber'] < round_num]
+                if not races_up_to_now.empty:
+                    recent_form = calculate_recent_form(races_up_to_now, num_races=5)
+                    driver_recent_form = recent_form.get(driver_num, np.nan)
+                else:
+                    driver_recent_form = np.nan
+            
             features = {
                 'Year': year,
                 'EventName': track_name,
@@ -381,6 +492,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
                 'GridPosition': grid_position,  # Starting grid position (qualifying)
+                'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'ActualPosition': race.get('Position', np.nan)
@@ -453,6 +565,24 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 # Try alternative column names
                 grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
             
+            # Recent form (last 5 races average finish) - captures current momentum
+            if round_num == 1:
+                # First race: use last year's recent form
+                last_year_data = all_training_data[all_training_data['Year'] == max(training_years)]
+                if not last_year_data.empty:
+                    recent_form = calculate_recent_form(last_year_data, num_races=5)
+                    driver_recent_form = recent_form.get(driver_num, np.nan)
+                else:
+                    driver_recent_form = np.nan
+            else:
+                # Use races from test season up to (but not including) this race
+                races_up_to_now = test_data_sorted[test_data_sorted['RoundNumber'] < round_num]
+                if not races_up_to_now.empty:
+                    recent_form = calculate_recent_form(races_up_to_now, num_races=5)
+                    driver_recent_form = recent_form.get(driver_num, np.nan)
+                else:
+                    driver_recent_form = np.nan
+            
             features = {
                 'Year': test_year,
                 'EventName': track_name,
@@ -463,6 +593,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
                 'GridPosition': grid_position,  # Starting grid position (qualifying)
+                'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'ActualPosition': race.get('Position', np.nan)
@@ -501,7 +632,7 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
         'training_samples': len(training_df),
         'test_samples': len(test_df),
         'features': ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
-                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition'],
+                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm'],
         'label': 'DriverNumber'
     }
     
@@ -511,8 +642,8 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
 
 def main():
     """Main function to collect and organize F1 data."""
-    # Past 5 seasons for training (2020-2024)
-    training_years = [2020, 2021, 2022, 2023, 2024]
+    # Training data from 2022 onwards (more recent, relevant data)
+    training_years = [2022, 2023, 2024]
     # Current season for testing (2025)
     test_year = 2025
     
@@ -534,7 +665,7 @@ def main():
         print("\nData collection complete!")
         print(f"\nTraining data summary:")
         feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
-                       'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                       'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
         print(training_df[feature_cols + ['DriverNumber']].describe())
         
     except Exception as e:

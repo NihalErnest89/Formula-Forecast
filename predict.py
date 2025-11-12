@@ -11,6 +11,7 @@ from pathlib import Path
 import argparse
 import torch
 import torch.nn as nn
+# Lazy import fastf1 - only import when needed for future race selection
 
 
 class F1NeuralNetwork(nn.Module):
@@ -58,18 +59,22 @@ def load_model(model_dir: str = 'models', model_type: str = 'neural_network', au
         tried_nn = True
         
         if nn_model_path.exists() and nn_scaler_path.exists():
-            # Initialize and load model
+            # Load scaler first to determine input size
+            with open(nn_scaler_path, 'rb') as f:
+                scaler = pickle.load(f)
+            
+            # Get input size from scaler
+            input_size = getattr(scaler, 'n_features_in_', 7)  # Default to 7 if not available
+            
+            # Initialize and load model with correct input size
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             model = F1NeuralNetwork(
-                input_size=6,
+                input_size=input_size,
                 hidden_sizes=[128, 64, 32],
                 dropout_rate=0.3
             ).to(device)
             model.load_state_dict(torch.load(nn_model_path, map_location=device))
             model.eval()
-            
-            with open(nn_scaler_path, 'rb') as f:
-                scaler = pickle.load(f)
             
             return model, scaler, 'neural_network', device
         elif auto_fallback:
@@ -112,7 +117,8 @@ def load_model(model_dir: str = 'models', model_type: str = 'neural_network', au
 def predict_position(season_points: float, season_avg_finish: float, 
                     historical_track_avg: float, constructor_points: float,
                     constructor_standing: float, grid_position: float,
-                    model, scaler, model_type='neural_network', device=None):
+                    model, scaler, model_type='neural_network', device=None,
+                    recent_form: float = None):
     """
     Predict finishing position for a driver given input features.
     
@@ -123,6 +129,7 @@ def predict_position(season_points: float, season_avg_finish: float,
         constructor_points: Constructor's total points
         constructor_standing: Constructor's championship standing
         grid_position: Starting grid position (qualifying)
+        recent_form: Average finish position in last 5 races (optional)
         model: Trained model
         scaler: Fitted scaler
         model_type: 'neural_network' or 'random_forest'
@@ -131,9 +138,29 @@ def predict_position(season_points: float, season_avg_finish: float,
     Returns:
         Predicted finishing position (1-20)
     """
-    # Create feature vector
-    features = np.array([[season_points, season_avg_finish, historical_track_avg,
-                          constructor_points, constructor_standing, grid_position]])
+    # Check how many features the model expects
+    expected_features = getattr(scaler, 'n_features_in_', None)
+    
+    # Create feature vector based on model expectations
+    if expected_features == 7:
+        # Model expects 7 features (with RecentForm)
+        if recent_form is None:
+            recent_form = np.nan  # Use NaN if not provided
+        features = np.array([[season_points, season_avg_finish, historical_track_avg,
+                              constructor_points, constructor_standing, grid_position, recent_form]])
+    elif expected_features == 6:
+        # Model expects 6 features (without RecentForm)
+        features = np.array([[season_points, season_avg_finish, historical_track_avg,
+                              constructor_points, constructor_standing, grid_position]])
+    else:
+        # Default to 7 features if unknown
+        if recent_form is None:
+            recent_form = np.nan
+        features = np.array([[season_points, season_avg_finish, historical_track_avg,
+                              constructor_points, constructor_standing, grid_position, recent_form]])
+    
+    # Handle NaN values
+    features = np.nan_to_num(features, nan=np.nanmedian(features, axis=0))
     
     # Scale features
     features_scaled = scaler.transform(features)
@@ -170,9 +197,14 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     Returns:
         DataFrame with predicted positions, sorted to show top 10
     """
-    # All 6 features (new version)
-    all_feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                        'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+    # 7 features (current standard)
+    all_feature_cols_7 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                          'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+    # 6 features (before RecentForm was added)
+    all_feature_cols_6 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                          'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+    # 3 features (old)
+    all_feature_cols_3 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
     
     # Check how many features the scaler expects
     expected_features = getattr(scaler, 'n_features_in_', None)
@@ -180,22 +212,29 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     # Determine which features to use based on what the model expects
     if expected_features == 3:
         # Old model trained with 3 features
-        feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
+        feature_cols = all_feature_cols_3
         print(f"Warning: Model was trained with 3 features. Using only: {feature_cols}")
-        print("  To use all 6 features, please retrain the model with: python train_rf.py")
+        print("  To use all 7 features, please retrain the model with: python train.py or python train_rf.py")
     elif expected_features == 6:
-        # New model trained with 6 features
-        feature_cols = all_feature_cols
+        # Model trained with 6 features (before RecentForm was added)
+        feature_cols = all_feature_cols_6
+        print(f"Warning: Model was trained with 6 features. Using only: {feature_cols}")
+        print("  To use all 7 features (including RecentForm), please retrain the model.")
+    elif expected_features == 7:
+        # Model trained with 7 features (current standard)
+        feature_cols = all_feature_cols_7
     else:
         # Unknown, try to infer from scaler
         if expected_features is not None:
             if expected_features == 3:
-                feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
+                feature_cols = all_feature_cols_3
+            elif expected_features == 6:
+                feature_cols = all_feature_cols_6
             else:
-                feature_cols = all_feature_cols
+                feature_cols = all_feature_cols_7
         else:
-            # Fallback: try 6 features first, if it fails, try 3
-            feature_cols = all_feature_cols
+            # Fallback: try 7 features first, then 6, then 3
+            feature_cols = all_feature_cols_7
     
     # Check if required columns exist
     missing_cols = [col for col in feature_cols if col not in drivers_df.columns]
@@ -227,10 +266,18 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     except ValueError as e:
         if "features" in str(e).lower():
             # Feature mismatch - try with 3 features if we were using 6
-            if len(feature_cols) == 6 and expected_features != 6:
+            if len(feature_cols) != expected_features:
                 print(f"Error: Model expects {expected_features} features but got {len(feature_cols)}.")
-                print("Attempting with 3 features (old model format)...")
-                feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
+                # Try to fall back to correct number
+                if expected_features == 3:
+                    feature_cols = all_feature_cols_3
+                elif expected_features == 6:
+                    feature_cols = all_feature_cols_6
+                elif expected_features == 7:
+                    feature_cols = all_feature_cols_7
+                else:
+                    raise ValueError(f"Cannot determine feature set for {expected_features} features")
+                print(f"  Falling back to {len(feature_cols)} features: {feature_cols}")
                 X = drivers_df[feature_cols].values
                 X = np.nan_to_num(X, nan=np.nanmedian(X, axis=0))
                 X_scaled = scaler.transform(X)
@@ -286,19 +333,27 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
         DataFrame with predictions added
     """
     # Use the same feature detection logic as predict_race_top10
-    all_feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                        'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+    # 7 features (current standard)
+    all_feature_cols_7 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                          'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+    # 6 features (before RecentForm was added)
+    all_feature_cols_6 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                          'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+    # 3 features (old)
+    all_feature_cols_3 = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
     
     # Check how many features the scaler expects
     expected_features = getattr(scaler, 'n_features_in_', None)
     
     # Determine which features to use
     if expected_features == 3:
-        feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
+        feature_cols = all_feature_cols_3
     elif expected_features == 6:
-        feature_cols = all_feature_cols
+        feature_cols = all_feature_cols_6
+    elif expected_features == 7:
+        feature_cols = all_feature_cols_7
     else:
-        feature_cols = all_feature_cols  # Default to 6
+        feature_cols = all_feature_cols_7  # Default to 7 (current standard)
     
     # Check if required columns exist
     missing_cols = [col for col in feature_cols if col not in df.columns]
@@ -323,9 +378,18 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     try:
         X_scaled = scaler.transform(X)
     except ValueError as e:
-        if "features" in str(e).lower() and len(feature_cols) == 6 and expected_features == 3:
-            # Fallback to 3 features
-            feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition']
+        if "features" in str(e).lower():
+            print(f"  Feature mismatch detected. Model expects {expected_features} features.")
+            # Try to fall back to correct number
+            if expected_features == 3:
+                feature_cols = all_feature_cols_3
+            elif expected_features == 6:
+                feature_cols = all_feature_cols_6
+            elif expected_features == 7:
+                feature_cols = all_feature_cols_7
+            else:
+                raise
+            print(f"  Falling back to {len(feature_cols)} features: {feature_cols}")
             X = df[feature_cols].values
             with np.errstate(all='ignore'):
                 col_means = np.nanmean(X, axis=0)
@@ -357,21 +421,123 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     return df
 
 
+def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int, 
+                                    track_name: str):
+    """
+    Calculate features for a future race using data from the most recent completed race.
+    
+    Args:
+        test_df: DataFrame with test data (completed races)
+        selected_year: Year of the future race
+        selected_round: Round number of the future race
+        track_name: Name of the track for the future race
+        
+    Returns:
+        DataFrame with driver features for the future race
+    """
+    # Get the most recent completed race data
+    recent_races = test_df[test_df['Year'] == selected_year].copy()
+    if recent_races.empty:
+        # If no races in this year, use last year's data
+        recent_races = test_df.copy()
+    
+    if recent_races.empty:
+        raise ValueError("No historical data available to calculate features for future race")
+    
+    # Get the most recent race (highest round number)
+    most_recent_round = recent_races['RoundNumber'].max()
+    most_recent_race = recent_races[recent_races['RoundNumber'] == most_recent_round].copy()
+    
+    print(f"  Using features from most recent race: Round {most_recent_round}")
+    
+    # For each driver in the most recent race, use their current features
+    # These features represent their state up to the most recent race
+    future_race_features = []
+    
+    for _, driver_row in most_recent_race.iterrows():
+        driver_num = driver_row['DriverNumber']
+        driver_name = driver_row.get('DriverName', f"Driver {driver_num}")
+        
+        # Use features from the most recent race
+        # These are already calculated up to that point (no future data leakage)
+        features = {
+            'Year': selected_year,
+            'EventName': track_name,
+            'RoundNumber': selected_round,
+            'SeasonPoints': driver_row.get('SeasonPoints', 0),
+            'SeasonAvgFinish': driver_row.get('SeasonAvgFinish', np.nan),
+            'HistoricalTrackAvgPosition': driver_row.get('HistoricalTrackAvgPosition', np.nan),
+            'ConstructorPoints': driver_row.get('ConstructorPoints', 0),
+            'ConstructorStanding': driver_row.get('ConstructorStanding', 10),
+            'GridPosition': np.nan,  # Can't know grid position for future race yet
+            'RecentForm': driver_row.get('RecentForm', np.nan),  # Recent form from most recent race
+            'DriverNumber': driver_num,
+            'DriverName': driver_name,
+            'ActualPosition': np.nan  # Future race, no actual position
+        }
+        future_race_features.append(features)
+    
+    return pd.DataFrame(future_race_features)
+
+
+def get_future_races(year: int):
+    """
+    Get future races (scheduled but not yet completed) from Fast F1 schedule.
+    Uses cached schedule data without loading race sessions to avoid API calls.
+    
+    Args:
+        year: Season year
+        
+    Returns:
+        DataFrame with future race schedule information
+    """
+    try:
+        # Lazy import to avoid triggering cache on every predict.py run
+        import fastf1
+        
+        # Only get schedule - don't load sessions (that triggers API calls)
+        schedule = fastf1.get_event_schedule(year)
+        if schedule is None or schedule.empty:
+            return pd.DataFrame()
+        
+        # Get all races from schedule
+        # We'll determine if they're future races by checking if they exist in test data
+        # This avoids loading sessions which triggers API calls
+        all_races = []
+        for _, event in schedule.iterrows():
+            all_races.append({
+                'Year': year,
+                'EventName': event['EventName'],
+                'RoundNumber': event['RoundNumber'],
+                'Date': event.get('EventDate', ''),
+                'Location': event.get('Location', '')
+            })
+        
+        return pd.DataFrame(all_races)
+    except Exception as e:
+        # If fastf1 isn't available or fails, just return empty
+        return pd.DataFrame()
+
+
 def select_race_interactive(test_df: pd.DataFrame):
     """
     Interactive function to let user select year and race from available options.
+    Includes future races that haven't happened yet.
     
     Args:
         test_df: DataFrame with test data containing Year, EventName, RoundNumber columns
         
     Returns:
-        Tuple of (selected_df, input_source_string) or (None, None) if cancelled
+        Tuple of (selected_df, input_source_string, is_future_race) or (None, None, False) if cancelled
     """
     if 'Year' not in test_df.columns or 'EventName' not in test_df.columns:
-        return None, None
+        return None, None, False
     
-    # Get unique years
+    # Get unique years from test data
     unique_years = sorted(test_df['Year'].unique())
+    
+    # Note: Future race checking is done lazily when user selects a year
+    # to avoid triggering Fast F1 API calls on every predict.py run
     
     print("\n" + "=" * 70)
     print("Available Years:")
@@ -383,7 +549,7 @@ def select_race_interactive(test_df: pd.DataFrame):
         try:
             year_choice = input(f"\nSelect year (1-{len(unique_years)}) or 'q' to quit: ").strip()
             if year_choice.lower() == 'q':
-                return None, None
+                return None, None, False
             
             year_idx = int(year_choice) - 1
             if 0 <= year_idx < len(unique_years):
@@ -394,42 +560,89 @@ def select_race_interactive(test_df: pd.DataFrame):
         except ValueError:
             print("Please enter a valid number or 'q' to quit")
     
-    # Filter to selected year and get unique races
+    # Get races from test data (completed races)
     year_data = test_df[test_df['Year'] == selected_year]
-    unique_races = year_data[['Year', 'EventName', 'RoundNumber']].drop_duplicates()
-    unique_races = unique_races.sort_values('RoundNumber')
+    completed_races = year_data[['Year', 'EventName', 'RoundNumber']].drop_duplicates()
+    
+    # Get future races for this year
+    future_races = get_future_races(selected_year)
+    
+    # Combine completed and future races
+    if not future_races.empty:
+        # Merge future races (avoid duplicates)
+        future_races_clean = future_races[['Year', 'EventName', 'RoundNumber']].drop_duplicates()
+        # Only add future races that aren't already in completed races
+        future_only = future_races_clean[
+            ~future_races_clean.set_index(['Year', 'EventName', 'RoundNumber']).index.isin(
+                completed_races.set_index(['Year', 'EventName', 'RoundNumber']).index
+            )
+        ]
+        all_races = pd.concat([completed_races, future_only], ignore_index=True)
+    else:
+        all_races = completed_races
+    
+    all_races = all_races.sort_values('RoundNumber')
+    
+    # Check which races are future (no data in test_df)
+    is_future_list = []
+    for _, race in all_races.iterrows():
+        has_data = not test_df[
+            (test_df['Year'] == race['Year']) & 
+            (test_df['EventName'] == race['EventName']) &
+            (test_df['RoundNumber'] == race['RoundNumber'])
+        ].empty
+        is_future_list.append(not has_data)
     
     print(f"\n" + "=" * 70)
     print(f"Available Races for {selected_year}:")
     print("=" * 70)
-    for idx, (_, race) in enumerate(unique_races.iterrows(), 1):
-        print(f"  {idx}. {race['EventName']} (Round {race['RoundNumber']})")
+    for idx, (_, race) in enumerate(all_races.iterrows(), 1):
+        future_marker = " [FUTURE]" if is_future_list[idx-1] else ""
+        print(f"  {idx}. {race['EventName']} (Round {race['RoundNumber']}){future_marker}")
     
     while True:
         try:
-            race_choice = input(f"\nSelect race (1-{len(unique_races)}) or 'q' to quit: ").strip()
+            race_choice = input(f"\nSelect race (1-{len(all_races)}) or 'q' to quit: ").strip()
             if race_choice.lower() == 'q':
-                return None, None
+                return None, None, False
             
             race_idx = int(race_choice) - 1
-            if 0 <= race_idx < len(unique_races):
-                selected_race = unique_races.iloc[race_idx]
+            if 0 <= race_idx < len(all_races):
+                selected_race = all_races.iloc[race_idx]
                 break
             else:
-                print(f"Please enter a number between 1 and {len(unique_races)}")
+                print(f"Please enter a number between 1 and {len(all_races)}")
         except ValueError:
             print("Please enter a valid number or 'q' to quit")
     
-    # Filter to selected race
+    # Check if this is a future race (no data in test_df)
     race_df = test_df[
         (test_df['Year'] == selected_race['Year']) & 
         (test_df['EventName'] == selected_race['EventName']) &
         (test_df['RoundNumber'] == selected_race['RoundNumber'])
     ].copy()
     
+    if race_df.empty:
+        # Future race - calculate features using most recent race data
+        print(f"\n  This is a future race. Calculating features from most recent race data...")
+        try:
+            # Calculate features for future race using most recent completed race
+            race_df = calculate_future_race_features(
+                test_df, selected_year, selected_race['RoundNumber'], selected_race['EventName']
+            )
+            print(f"  Calculated features for {len(race_df)} drivers")
+            print(f"  Note: GridPosition is unknown for future races (will use NaN/median)")
+            
+            input_source = f"{selected_race['EventName']} ({selected_year}, Round {selected_race['RoundNumber']}) [FUTURE]"
+            return race_df, input_source, True
+        except Exception as e:
+            print(f"  Error calculating features for future race: {e}")
+            print(f"  Please use --input-file with driver features for future races.")
+            return None, None, False
+    
     input_source = f"{selected_race['EventName']} ({selected_year}, Round {selected_race['RoundNumber']})"
     
-    return race_df, input_source
+    return race_df, input_source, False
 
 
 def main():
@@ -554,22 +767,32 @@ def main():
         else:
             # Interactive mode: let user select year and race
             print(f"\nLoading test data from {test_data_path}...")
-            df, input_source = select_race_interactive(test_df)
+            df, input_source, is_future_race = select_race_interactive(test_df)
             if df is None:
                 print("\nSelection cancelled. Exiting.")
                 return
-            print(f"\nSelected race: {input_source}")
-            print(f"  Found {len(df)} drivers")
+            
+            if is_future_race:
+                print(f"\nSelected race: {input_source}")
+                print(f"  This is a future race - predictions will be made but accuracy cannot be calculated.")
+                print(f"  Features calculated from most recent completed race.")
+                print(f"  Found {len(df)} drivers")
+            else:
+                print(f"\nSelected race: {input_source}")
+                print(f"  Found {len(df)} drivers")
     
     # Predict positions and get top 10
     try:
         top10, all_results = predict_race_top10(df, model, scaler, model_type, device)
         
+        # Check if this is a future race (no actual positions available)
+        is_future_race = 'ActualPosition' not in all_results.columns or all_results['ActualPosition'].isna().all()
+        
         # Display top 10
         print("\n" + "=" * 70)
         print(f"PREDICTED TOP 10 FINISHERS ({input_source})")
         print("=" * 70)
-        if 'ActualPosition' in all_results.columns:
+        if not is_future_race and 'ActualPosition' in all_results.columns:
             print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'Grid':<10}")
         else:
             print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted Pos':<15} {'Grid Pos':<10}")
@@ -582,7 +805,7 @@ def main():
             grid_pos = row.get('GridPosition', 'N/A')
             rank = row['Rank']
             
-            if 'ActualPosition' in row and not pd.isna(row['ActualPosition']):
+            if not is_future_race and 'ActualPosition' in row and not pd.isna(row['ActualPosition']):
                 actual_pos = int(row['ActualPosition'])
                 print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<12.2f} {actual_pos:<10} {grid_pos:<10}")
             else:
@@ -603,8 +826,8 @@ def main():
         print(f"  Worst in top 10: Position {top10['PredictedPosition'].max():.2f}")
         print(f"  Average predicted position (top 10): {top10['PredictedPosition'].mean():.2f}")
         
-        # If actual positions are available, show ranking accuracy
-        if 'ActualPosition' in all_results.columns:
+        # If actual positions are available, show ranking accuracy (skip for future races)
+        if not is_future_race and 'ActualPosition' in all_results.columns:
             # Calculate ranking accuracy - how well does predicted rank match actual position?
             exact_matches = 0
             within_1 = 0

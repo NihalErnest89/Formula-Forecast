@@ -132,7 +132,7 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None):
         Tuple of (X, y, label_encoder)
     """
     feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                   'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                   'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
     
     # Select features
     X = df[feature_cols].copy()
@@ -282,7 +282,8 @@ def train_model(X_train, y_train, X_val, y_val,
     
     # Initialize model (regression - outputs single position value)
     # equal_init=True ensures all features start with equal weights
-    model = F1NeuralNetwork(input_size=6, hidden_sizes=[128, 64, 32], 
+    # Using 7 features (6 original + RecentForm)
+    model = F1NeuralNetwork(input_size=7, hidden_sizes=[128, 64, 32], 
                            dropout_rate=0.3, equal_init=True).to(device)
     
     # Loss function and optimizer (MSE for regression)
@@ -312,7 +313,7 @@ def train_model(X_train, y_train, X_val, y_val,
     # Show initial feature importance (should be equal)
     if model.equal_init:
         feature_names = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                         'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                         'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
         initial_importance = get_feature_importance(model, feature_names, device)
         print(f"\nInitial Feature Importance (Equal Weights):")
         for name, importance in initial_importance.items():
@@ -486,7 +487,7 @@ def main():
     
     # Feature importance (from first layer weights)
     feature_names = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
     feature_importances = get_feature_importance(model, feature_names, device)
     print(f"\nFeature Importances (Weight Distribution from First Layer):")
     for name, importance in feature_importances.items():

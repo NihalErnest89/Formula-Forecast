@@ -55,7 +55,7 @@ def prepare_features_and_labels(df: pd.DataFrame):
         Tuple of (X, y) where X is feature matrix and y is label vector (finishing positions)
     """
     feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
-                   'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                   'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
     
     # Select features
     X = df[feature_cols].copy()
@@ -163,7 +163,7 @@ def evaluate_model(model, scaler, X_test: np.ndarray, y_test: np.ndarray):
     # Feature importance
     if hasattr(model, 'feature_importances_'):
         feature_names = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                         'ConstructorPoints', 'ConstructorStanding', 'GridPosition']
+                         'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
         importances = model.feature_importances_
         print(f"\nFeature Importances (Weight Distribution):")
         for name, importance in zip(feature_names, importances):

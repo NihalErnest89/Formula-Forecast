@@ -4,13 +4,14 @@ Predict F1 race winners using machine learning based on driver performance featu
 
 ## Overview
 
-This project predicts F1 race finishing positions and ranks drivers to show the **predicted top 10** using six key features:
+This project predicts F1 race finishing positions and ranks drivers to show the **predicted top 10** using seven key features:
 - **Season Points**: Total points accumulated in the season
 - **Season Average Finish Position**: Average finishing position this season
 - **Historical Track Average Position**: Driver's historical average position at the specific track
 - **Constructor Points**: Constructor's total points
 - **Constructor Standing**: Constructor's championship position
 - **Grid Position**: Starting grid position (qualifying position)
+- **Recent Form**: Average finish position in last 5 races (captures current momentum)
 
 ## Project Structure
 
@@ -78,7 +79,7 @@ python collect_data.py
 ```
 
 This will:
-- Collect data from past 5 seasons (2020-2024) for training
+- Collect data from 2022-2024 seasons for training
 - Collect data from 2025 season for testing
 - Calculate features (Season Points, Season Avg Finish, Historical Track Avg Position)
 - Save data to `data/training_data.csv` and `data/test_data.csv`
@@ -191,21 +192,21 @@ When using `predict.py`, provide a CSV with one row per driver containing:
 ### Neural Network (Deep Learning)
 - **Framework**: PyTorch
 - **Architecture**: Multi-layer Perceptron (MLP)
-  - Input: 6 features
+  - Input: 7 features
   - Hidden: 128 → 64 → 32 neurons
   - Activation: ReLU
   - Regularization: Dropout (0.3), Batch Normalization
   - Output: Single value (predicted finishing position 1-20)
-  - **Initialization**: Equal weights for all features (~16.67% each)
+  - **Initialization**: Equal weights for all features (~14.29% each)
 - **Training**: Adam optimizer, MSELoss (regression), learning rate scheduling, early stopping
-- **Features**: 6 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position)
+- **Features**: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
 - **Label**: Actual finishing position (1-20)
 - **Preprocessing**: Standard scaling of features
 
 ### Random Forest (Traditional ML)
 - **Algorithm**: Random Forest Regressor
 - **Parameters**: 100 trees, max depth 10
-- **Features**: 6 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position)
+- **Features**: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
 - **Initialization**: Considers all features equally at start, learns optimal importance
 - **Label**: Actual finishing position (1-20)
 - **Preprocessing**: Standard scaling of features
