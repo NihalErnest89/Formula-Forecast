@@ -15,7 +15,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 
 class F1Dataset(Dataset):
@@ -37,7 +36,7 @@ class F1NeuralNetwork(nn.Module):
     Deep Neural Network for F1 Position Prediction (Regression).
     
     Architecture:
-    - Input layer: 6 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position)
+    - Input layer: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
     - Hidden layers: Multiple fully connected layers with ReLU activation
     - Output layer: Single value (predicted finishing position 1-20)
     """
@@ -138,6 +137,7 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None):
     X = df[feature_cols].copy()
     
     # Handle missing values - use median for more robust handling
+    # Also clip extreme values that might be outliers
     for col in X.columns:
         if X[col].isna().any():
             median_val = X[col].median()
@@ -146,6 +146,16 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None):
                 X[col] = X[col].fillna(0)
             else:
                 X[col] = X[col].fillna(median_val)
+        
+        # Clip extreme outliers (beyond 3 standard deviations) to reduce their impact
+        # Skip GridPosition as it can legitimately be 1-20
+        if col != 'GridPosition':
+            mean_val = X[col].mean()
+            std_val = X[col].std()
+            if not pd.isna(std_val) and std_val > 0:
+                lower_bound = mean_val - 3 * std_val
+                upper_bound = mean_val + 3 * std_val
+                X[col] = X[col].clip(lower=lower_bound, upper=upper_bound)
     
     # Select labels (ActualPosition - finishing position 1-20)
     y = df['ActualPosition'].values
@@ -175,6 +185,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         
         # Backward pass
         loss.backward()
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
         # Statistics
@@ -286,11 +298,12 @@ def train_model(X_train, y_train, X_val, y_val,
     model = F1NeuralNetwork(input_size=7, hidden_sizes=[128, 64, 32], 
                            dropout_rate=0.3, equal_init=True).to(device)
     
-    # Loss function and optimizer (MSE for regression)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    # Loss function: Use Huber Loss for robustness to outliers (better than MSE for position prediction)
+    # Huber loss is less sensitive to outliers than MSE, which helps with DNFs, crashes, etc.
+    criterion = nn.HuberLoss(delta=1.0)  # delta=1.0 makes it similar to MAE for large errors
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # Slightly higher weight decay
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                      factor=0.5, patience=10)
+                                                      factor=0.5, patience=8, min_lr=1e-6)
     
     # Training history
     history = {
@@ -301,6 +314,7 @@ def train_model(X_train, y_train, X_val, y_val,
     }
     
     best_val_mae = float('inf')  # Lower is better for MAE
+    best_model_state = None
     patience_counter = 0
     early_stop_patience = 20
     
@@ -348,12 +362,17 @@ def train_model(X_train, y_train, X_val, y_val,
         # Early stopping (lower MAE is better)
         if val_mae < best_val_mae:
             best_val_mae = val_mae
+            best_model_state = model.state_dict().copy()  # Save best model
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= early_stop_patience:
                 print(f"\nEarly stopping at epoch {epoch+1}")
                 break
+    
+    # Load best model state
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
     
     print(f"\nBest validation MAE: {best_val_mae:.3f} positions")
     
@@ -454,7 +473,7 @@ def main():
     model, history = train_model(
         X_train_split, y_train_split, 
         X_val_split, y_val_split,
-        epochs=100,
+        epochs=160,
         batch_size=32,
         learning_rate=0.001,
         device=device
@@ -558,7 +577,7 @@ def main():
         'test_within_3': float(test_w3) if test_w3 else None,
         'feature_importances': {k: float(v) for k, v in feature_importances.items()},
         'model_architecture': {
-            'input_size': 6,
+            'input_size': 7,
             'hidden_sizes': [128, 64, 32],
             'dropout_rate': 0.3,
             'output': 'regression (single position value)'
