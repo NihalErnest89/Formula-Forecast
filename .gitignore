@@ -1,0 +1,38 @@
+# Fast F1 cache directory (can get large)
+cache/
+
+# Data directory
+data/
+
+# Model files
+models/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+*.png
+*.jpg
+*.json
+!requirements.txt
+!plan.md
+

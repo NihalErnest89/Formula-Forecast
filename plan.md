@@ -4,9 +4,12 @@
 - Season Points
 - Season Average Finish Position
 - Historical Track Average Position
+- Constructor Points
+- Constructor Standing
+- Grid Position (Qualifying Position) - Starting position on the grid
 
 ## Labels
-- Driver Name / Number
+- Race Finishing Position (1-20) - Predict the position each driver will finish in a race
 
 ## Data
 - Fast F1
@@ -16,8 +19,10 @@
   - Data from current 2025 season
 
 ## Objectives
+- Predict race finishing positions (1-20) for each driver
+- Rank drivers to show predicted top 10 for a race
 - Identify the correct features:
-  - Start with the 3 listed above (Season Points, Season Average Finish Position, Historical Track Average Position)
+  - Start with the 6 listed above (Season Points, Season Average Finish Position, Historical Track Average Position, Constructor Points, Constructor Standing, Grid Position)
   - Use learning to get the correct weight distribution for features
-  - Achieve good accuracy with race predictions
+  - Achieve good accuracy with race position predictions
 
