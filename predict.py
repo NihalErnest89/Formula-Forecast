@@ -164,7 +164,7 @@ def predict_position(season_points: float, season_avg_finish: float,
         historical_track_avg: Historical average position at this track
         constructor_points: Constructor's total points
         constructor_standing: Constructor's championship standing
-        grid_position: Starting grid position (qualifying)
+        grid_position: Average grid position (historical average, matches training data)
         recent_form: Average finish position in last 5 races (optional)
         model: Trained model
         scaler: Fitted scaler
@@ -909,7 +909,7 @@ def main():
                             print(f"{'='*70}")
                             print(f"Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)")
                             print()
-                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Start':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
+                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGrid':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
                             print("-" * 150)
                             
                             for _, row in top10.iterrows():
@@ -948,7 +948,7 @@ def main():
                             # Future race - show table with all features
                             print(f"\nPREDICTED TOP 10 FINISHERS")
                             print("-" * 150)
-                            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Grid':<6} {'Form':<6}")
+                            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'AvgGrid':<7} {'Form':<6}")
                             print("-" * 150)
                             
                             for _, row in top10.iterrows():
@@ -1053,10 +1053,10 @@ def main():
         print(f"PREDICTED TOP 10 FINISHERS ({input_source})")
         print("=" * 70)
         if not is_future_race and 'ActualPosition' in all_results.columns:
-            print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'Grid':<10} {'Status':<10}")
+            print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'AvgGrid':<10} {'Status':<10}")
         else:
             # Future race - show all features
-            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Grid':<6} {'Form':<6}")
+            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'AvgGrid':<7} {'Form':<6}")
         print("-" * 150 if is_future_race else "-" * 70)
         
         for _, row in top10.iterrows():
@@ -1122,7 +1122,7 @@ def main():
             print()
             
             # Show detailed comparison table
-            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Start':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
+            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGrid':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
             print("-" * 150)
             
             for _, row in top10.iterrows():
