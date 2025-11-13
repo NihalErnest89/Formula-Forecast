@@ -331,6 +331,94 @@ def calculate_track_avg_position(driver_results: pd.DataFrame, track_name: str) 
     return track_avg_dict
 
 
+def is_street_circuit(track_name: str) -> int:
+    """
+    Determine if a track is a street circuit (1) or permanent circuit (0).
+    Street circuits are more unpredictable.
+    """
+    street_circuits = [
+        'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
+        'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+    ]
+    return 1 if any(street in track_name for street in street_circuits) else 0
+
+
+def calculate_form_trend(driver_results: pd.DataFrame, driver_num: str, current_round: int) -> float:
+    """
+    Calculate form trend: difference between last 3 races avg and previous 3 races avg.
+    Positive = improving (lower positions = better), Negative = declining.
+    
+    Args:
+        driver_results: DataFrame with race results for a season, sorted by RoundNumber
+        driver_num: Driver number as string
+        current_round: Current round number (to avoid data leakage)
+        
+    Returns:
+        Form trend value (positive = improving, negative = declining)
+    """
+    driver_races = driver_results[
+        (driver_results['DriverNumber'] == driver_num) & 
+        (driver_results['RoundNumber'] < current_round)
+    ].copy()
+    
+    if len(driver_races) < 6:
+        return 0.0  # Not enough data
+    
+    driver_races = driver_races.sort_values('RoundNumber', ascending=False)
+    
+    # Last 3 races
+    last_3 = driver_races.head(3)
+    last_3_avg = last_3['Position'].dropna().mean()
+    
+    # Previous 3 races (races 4-6)
+    if len(driver_races) >= 6:
+        prev_3 = driver_races.iloc[3:6]
+        prev_3_avg = prev_3['Position'].dropna().mean()
+    else:
+        return 0.0
+    
+    if pd.isna(last_3_avg) or pd.isna(prev_3_avg):
+        return 0.0
+    
+    # Negative means improving (lower position = better)
+    # So: prev_avg - last_avg = positive if improving
+    trend = prev_3_avg - last_3_avg
+    return trend if not pd.isna(trend) else 0.0
+
+
+def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_year: int, current_round: int) -> float:
+    """
+    Calculate average grid position for a driver using only data up to the current race.
+    This simulates what we'd use for future race predictions.
+    
+    Args:
+        df: DataFrame with all race data
+        driver_num: Driver number as string
+        current_year: Current race year
+        current_round: Current race round number
+        
+    Returns:
+        Average grid position for the driver
+    """
+    # Get all races for this driver BEFORE the current race
+    driver_races = df[
+        (df['DriverNumber'] == driver_num) &
+        ((df['Year'] < current_year) | 
+         ((df['Year'] == current_year) & (df['RoundNumber'] < current_round)))
+    ]
+    
+    if driver_races.empty:
+        return np.nan
+    
+    # Get grid positions
+    grid_positions = driver_races['GridPosition'].dropna()
+    
+    if len(grid_positions) > 0:
+        return grid_positions.mean()
+    else:
+        return np.nan
+
+
 def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Collect and organize F1 data into features and labels.
@@ -458,11 +546,16 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                     if len(valid_positions) > 0:
                         hist_track_avg = valid_positions.mean()  # Overall career average
             
-            # Get starting grid position (qualifying position)
-            grid_position = race.get('GridPosition', np.nan)
+            # Get starting grid position - use AVERAGE grid position instead of actual
+            # This matches what we'll use for future race predictions and eliminates train/test mismatch
+            grid_position = calculate_average_grid_position(all_training_data, driver_num, year, round_num)
+            
+            # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
-                # Try alternative column names
-                grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+                grid_position = race.get('GridPosition', np.nan)
+                if pd.isna(grid_position):
+                    # Try alternative column names
+                    grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
             
             # Recent form (last 5 races average finish) - captures current momentum
             if round_num == 1:
@@ -482,6 +575,46 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 else:
                     driver_recent_form = np.nan
             
+            # Calculate new features for improved model
+            # 1. PointsGapToLeader: Points gap to championship leader
+            if round_num == 1:
+                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                if not prev_year_data.empty:
+                    prev_season_points = calculate_season_points(prev_year_data)
+                    max_points = max(prev_season_points.values()) if prev_season_points else 0
+                    points_gap = max_points - driver_points if max_points > 0 else 0
+                else:
+                    points_gap = 0
+            else:
+                races_up_to_now = year_data[year_data['RoundNumber'] < round_num]
+                if not races_up_to_now.empty:
+                    season_points = calculate_season_points(races_up_to_now)
+                    max_points = max(season_points.values()) if season_points else 0
+                    points_gap = max_points - driver_points if max_points > 0 else 0
+                else:
+                    points_gap = 0
+            
+            # 2. TrackType: 1 for street circuit, 0 for permanent
+            track_type = is_street_circuit(track_name)
+            
+            # 3. FormTrend: Momentum direction (improving vs declining)
+            if round_num == 1:
+                # First race: use previous season's trend
+                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                if not prev_year_data.empty:
+                    # Get last round of previous season
+                    prev_year_sorted = prev_year_data.sort_values('RoundNumber')
+                    if not prev_year_sorted.empty:
+                        last_round = prev_year_sorted['RoundNumber'].max()
+                        form_trend = calculate_form_trend(prev_year_sorted, driver_num, last_round + 1)
+                    else:
+                        form_trend = 0.0
+                else:
+                    form_trend = 0.0
+            else:
+                # Use current season data
+                form_trend = calculate_form_trend(year_data, driver_num, round_num)
+            
             features = {
                 'Year': year,
                 'EventName': track_name,
@@ -491,8 +624,11 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'HistoricalTrackAvgPosition': hist_track_avg,
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
-                'GridPosition': grid_position,  # Starting grid position (qualifying)
+                'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
+                'PointsGapToLeader': points_gap,  # Points gap to championship leader
+                'TrackType': track_type,  # 1 = street circuit, 0 = permanent
+                'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'ActualPosition': race.get('Position', np.nan)
@@ -559,11 +695,25 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                     if len(valid_positions) > 0:
                         hist_track_avg = valid_positions.mean()  # Overall career average from training data
             
-            # Get starting grid position (qualifying position)
-            grid_position = race.get('GridPosition', np.nan)
+            # Get starting grid position - use AVERAGE grid position instead of actual
+            # This matches what we'll use for future race predictions and eliminates train/test mismatch
+            # For test data, we calculate average from training data + previous test races
+            if round_num == 1:
+                # First race: use only training data
+                combined_data = all_training_data
+            else:
+                # Use training data + previous test races
+                previous_test_races = test_data_sorted[test_data_sorted['RoundNumber'] < round_num]
+                combined_data = pd.concat([all_training_data, previous_test_races], ignore_index=True) if not previous_test_races.empty else all_training_data
+            
+            grid_position = calculate_average_grid_position(combined_data, driver_num, test_year, round_num)
+            
+            # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
-                # Try alternative column names
-                grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+                grid_position = race.get('GridPosition', np.nan)
+                if pd.isna(grid_position):
+                    # Try alternative column names
+                    grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
             
             # Recent form (last 5 races average finish) - captures current momentum
             if round_num == 1:
@@ -583,6 +733,45 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 else:
                     driver_recent_form = np.nan
             
+            # Calculate new features for improved model
+            # 1. PointsGapToLeader: Points gap to championship leader
+            if round_num == 1:
+                last_year_data = all_training_data[all_training_data['Year'] == max(training_years)]
+                if not last_year_data.empty:
+                    last_season_points = calculate_season_points(last_year_data)
+                    max_points = max(last_season_points.values()) if last_season_points else 0
+                    points_gap = max_points - driver_points if max_points > 0 else 0
+                else:
+                    points_gap = 0
+            else:
+                races_up_to_now = test_data_sorted[test_data_sorted['RoundNumber'] < round_num]
+                if not races_up_to_now.empty:
+                    season_points = calculate_season_points(races_up_to_now)
+                    max_points = max(season_points.values()) if season_points else 0
+                    points_gap = max_points - driver_points if max_points > 0 else 0
+                else:
+                    points_gap = 0
+            
+            # 2. TrackType: 1 for street circuit, 0 for permanent
+            track_type = is_street_circuit(track_name)
+            
+            # 3. FormTrend: Momentum direction (improving vs declining)
+            if round_num == 1:
+                # First race: use last year's trend
+                last_year_data = all_training_data[all_training_data['Year'] == max(training_years)]
+                if not last_year_data.empty:
+                    last_year_sorted = last_year_data.sort_values('RoundNumber')
+                    if not last_year_sorted.empty:
+                        last_round = last_year_sorted['RoundNumber'].max()
+                        form_trend = calculate_form_trend(last_year_sorted, driver_num, last_round + 1)
+                    else:
+                        form_trend = 0.0
+                else:
+                    form_trend = 0.0
+            else:
+                # Use test season data
+                form_trend = calculate_form_trend(test_data_sorted, driver_num, round_num)
+            
             features = {
                 'Year': test_year,
                 'EventName': track_name,
@@ -592,8 +781,11 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'HistoricalTrackAvgPosition': hist_track_avg,
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
-                'GridPosition': grid_position,  # Starting grid position (qualifying)
+                'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
+                'PointsGapToLeader': points_gap,  # Points gap to championship leader
+                'TrackType': track_type,  # 1 = street circuit, 0 = permanent
+                'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'ActualPosition': race.get('Position', np.nan)

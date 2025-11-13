@@ -106,11 +106,11 @@ This will:
 - Generate training history plots
 
 **Architecture:**
-- Input: 3 features
+- Input: 7 features
 - Hidden layers: 128 → 64 → 32 neurons
 - Activation: ReLU
 - Regularization: Dropout (0.3) and Batch Normalization
-- Output: Softmax over driver classes
+- Output: Single regression value (predicted finishing position 1-20)
 
 #### Option B: Random Forest (Traditional ML)
 
@@ -190,26 +190,54 @@ When using `predict.py`, provide a CSV with one row per driver containing:
 ## Model Details
 
 ### Neural Network (Deep Learning)
-- **Framework**: PyTorch
-- **Architecture**: Multi-layer Perceptron (MLP)
-  - Input: 7 features
-  - Hidden: 128 → 64 → 32 neurons
-  - Activation: ReLU
-  - Regularization: Dropout (0.3), Batch Normalization
-  - Output: Single value (predicted finishing position 1-20)
-  - **Initialization**: Equal weights for all features (~14.29% each)
-- **Training**: Adam optimizer, MSELoss (regression), learning rate scheduling, early stopping
-- **Features**: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
-- **Label**: Actual finishing position (1-20)
-- **Preprocessing**: Standard scaling of features
 
-### Random Forest (Traditional ML)
-- **Algorithm**: Random Forest Regressor
-- **Parameters**: 100 trees, max depth 10
-- **Features**: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
-- **Initialization**: Considers all features equally at start, learns optimal importance
-- **Label**: Actual finishing position (1-20)
-- **Preprocessing**: Standard scaling of features
+We used a **Multi-Layer Perceptron (MLP) neural network for regression** to predict F1 race finishing positions. Here's how we implemented it:
+
+#### 1. Problem Formulation
+- **Task**: Regression (predict finishing position 1–20)
+- **Input**: 7 features per driver (SeasonPoints, SeasonAvgFinish, HistoricalTrackAvgPosition, ConstructorPoints, ConstructorStanding, GridPosition, RecentForm)
+- **Output**: Single continuous value (predicted finishing position)
+
+#### 2. Architecture
+- **Type**: Feedforward neural network (MLP)
+- **Structure**:
+  - Input layer: 7 neurons (one per feature)
+  - Hidden layers: 128 → 64 → 32 neurons
+  - Output layer: 1 neuron (regression)
+- **Activation**: ReLU (Rectified Linear Unit)
+- **Regularization**:
+  - Dropout (0.3) to reduce overfitting
+  - Batch normalization for stable training
+  - Weight decay (L2 regularization, 1e-4)
+
+#### 3. Training
+- **Framework**: PyTorch
+- **Loss Function**: Huber loss (robust to outliers like DNFs/crashes)
+- **Optimizer**: Adam
+- **Learning Rate**: 0.001 with ReduceLROnPlateau scheduler
+- **Early Stopping**: Patience of 20 epochs
+- **Data**: 2022–2024 seasons (training), 2025 (test)
+- **Preprocessing**: StandardScaler (zero mean, unit variance)
+
+#### 4. Design Decisions
+- **Equal Weight Initialization**: First layer initialized to give equal importance to all features (~14.29% each)
+- **Gradient Clipping**: Max norm 1.0 to prevent exploding gradients
+- **Outlier Handling**: Huber loss and outlier clipping in preprocessing (3 standard deviations)
+- **Best Model Checkpointing**: Saves the best validation model during training
+
+#### 5. Results
+- **Test MAE**: ~3.13 positions
+- **Within 1 position**: ~23%
+- **Within 3 positions**: ~61%
+- **R²**: ~0.46
+
+#### 6. Why a Neural Network?
+- **Non-linear Relationships**: Captures complex interactions between features
+- **Feature Learning**: Learns which features matter most (e.g., GridPosition ~20% importance, SeasonAvgFinish ~15% importance)
+- **Scalability**: Easy to add features or adjust architecture
+
+The model learns to weight features like GridPosition (~20% importance) and SeasonAvgFinish (~15% importance) to predict where each driver will finish, accounting for non-linear relationships between driver performance, track history, and recent form.
+
 
 ## Output
 

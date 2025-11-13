@@ -319,9 +319,11 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
     # Calculate track-specific historical averages for this specific track
     # Use training data if available (has more historical data), otherwise use test data
     historical_df = training_df if training_df is not None and not training_df.empty else test_df
-    
+
     track_historical_data = historical_df[historical_df['EventName'] == track_name]
     track_avg_by_driver = {}
+    grid_avg_by_driver = {}  # Average grid position per driver
+    
     for driver_num in track_historical_data['DriverNumber'].unique():
         driver_track_races = track_historical_data[track_historical_data['DriverNumber'] == driver_num]
         # Try to get ActualPosition or Position column
@@ -351,6 +353,17 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
                     track_avg_by_driver[str(driver_num)] = np.nan
             else:
                 track_avg_by_driver[str(driver_num)] = np.nan
+        
+        # Calculate average grid position for this driver (from all historical races)
+        driver_all_races = historical_df[historical_df['DriverNumber'] == driver_num]
+        if not driver_all_races.empty and 'GridPosition' in driver_all_races.columns:
+            valid_grid_positions = driver_all_races['GridPosition'].dropna()
+            if len(valid_grid_positions) > 0:
+                grid_avg_by_driver[str(driver_num)] = valid_grid_positions.mean()
+            else:
+                grid_avg_by_driver[str(driver_num)] = np.nan
+        else:
+            grid_avg_by_driver[str(driver_num)] = np.nan
     
     for _, driver_row in most_recent_race.iterrows():
         driver_num = driver_row['DriverNumber']
@@ -359,6 +372,19 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
         # Get track-specific historical average for this driver at this track
         hist_track_avg = track_avg_by_driver.get(str(driver_num), 
                                                   driver_row.get('HistoricalTrackAvgPosition', np.nan))
+        
+        # Get driver's historical average grid position (or use most recent if no history)
+        driver_grid_avg = grid_avg_by_driver.get(str(driver_num), np.nan)
+        if pd.isna(driver_grid_avg):
+            # Fallback: use most recent grid position, or historical average from driver_row
+            driver_grid_avg = driver_row.get('GridPosition', np.nan)
+            if pd.isna(driver_grid_avg):
+                # Last resort: use driver's overall average from historical data
+                driver_all_races = historical_df[historical_df['DriverNumber'] == driver_num]
+                if not driver_all_races.empty and 'GridPosition' in driver_all_races.columns:
+                    valid_grid = driver_all_races['GridPosition'].dropna()
+                    if len(valid_grid) > 0:
+                        driver_grid_avg = valid_grid.mean()
         
         # Use features from the most recent race, but update track-specific data
         features = {
@@ -370,7 +396,7 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             'HistoricalTrackAvgPosition': hist_track_avg,  # Track-specific average
             'ConstructorPoints': driver_row.get('ConstructorPoints', 0),
             'ConstructorStanding': driver_row.get('ConstructorStanding', 10),
-            'GridPosition': np.nan,  # Can't know grid position for future race yet
+            'GridPosition': driver_grid_avg,  # Use driver's historical average grid position
             'RecentForm': driver_row.get('RecentForm', np.nan),  # Recent form from most recent race
             'DriverNumber': driver_num,
             'DriverName': driver_name,
@@ -883,8 +909,8 @@ def main():
                             print(f"{'='*70}")
                             print(f"Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)")
                             print()
-                            print(f"{'Driver':<20} {'Pred Rank':<12} {'Actual Pos':<12} {'Starting Pos':<13} {'Error':<10} {'Status':<15}")
-                            print("-" * 70)
+                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Start':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
+                            print("-" * 150)
                             
                             for _, row in top10.iterrows():
                                 if not pd.isna(row.get('ActualPosition')):
@@ -898,23 +924,55 @@ def main():
                                     error = abs(pred_rank - actual_pos)
                                     driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
                                     status = get_status(error)
-                                    print(f"{driver_name:<20} {pred_rank:<12} {actual_pos:<12} {grid_pos:<13} {error:<10} {status:<15}")
+                                    
+                                    # Get all features
+                                    season_pts = row.get('SeasonPoints', 0)
+                                    season_avg = row.get('SeasonAvgFinish', 0)
+                                    track_avg = row.get('HistoricalTrackAvgPosition', 0)
+                                    constr_pts = row.get('ConstructorPoints', 0)
+                                    constr_st = row.get('ConstructorStanding', 0)
+                                    recent_form = row.get('RecentForm', 0)
+                                    
+                                    # Format values
+                                    season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                                    season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                                    track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
+                                    constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                                    constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                                    recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                                    
+                                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<7} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {recent_form_str:<6}")
                             
-                            print("-" * 70)
+                            print("-" * 150)
                         else:
-                            # Future race - show simple table
+                            # Future race - show table with all features
                             print(f"\nPREDICTED TOP 10 FINISHERS")
-                            print("-" * 70)
-                            print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted Pos':<15} {'Grid Pos':<10}")
-                            print("-" * 70)
+                            print("-" * 150)
+                            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Grid':<6} {'Form':<6}")
+                            print("-" * 150)
                             
                             for _, row in top10.iterrows():
                                 driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
-                                driver_num = row.get('DriverNumber', 'N/A')
-                                pred_pos = row['PredictedPosition']
-                                grid_pos = row.get('GridPosition', 'N/A')
                                 rank = row['Rank']
-                                print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<15.2f} {grid_pos:<10}")
+                                pred_pos = row['PredictedPosition']
+                                season_pts = row.get('SeasonPoints', 0)
+                                season_avg = row.get('SeasonAvgFinish', 0)
+                                track_avg = row.get('HistoricalTrackAvgPosition', 0)
+                                constr_pts = row.get('ConstructorPoints', 0)
+                                constr_st = row.get('ConstructorStanding', 0)
+                                grid_pos = row.get('GridPosition', 0)
+                                recent_form = row.get('RecentForm', 0)
+                                
+                                # Format values
+                                season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                                season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                                track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
+                                constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                                constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                                grid_pos_str = f"{grid_pos:.0f}" if not pd.isna(grid_pos) else "N/A"
+                                recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                                
+                                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.2f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {grid_pos_str:<6} {recent_form_str:<6}")
                         
                         # Store predictions
                         top10_copy = top10.copy()
@@ -997,8 +1055,9 @@ def main():
         if not is_future_race and 'ActualPosition' in all_results.columns:
             print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'Grid':<10} {'Status':<10}")
         else:
-            print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted Pos':<15} {'Grid Pos':<10}")
-        print("-" * 70)
+            # Future race - show all features
+            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Grid':<6} {'Form':<6}")
+        print("-" * 150 if is_future_race else "-" * 70)
         
         for _, row in top10.iterrows():
             driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
@@ -1012,7 +1071,25 @@ def main():
                 status = get_status(abs(rank - actual_pos))
                 print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<12.2f} {actual_pos:<10} {grid_pos:<10} {status:<10}")
             else:
-                print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<15.2f} {grid_pos:<10}")
+                # Future race - show all features
+                season_pts = row.get('SeasonPoints', 0)
+                season_avg = row.get('SeasonAvgFinish', 0)
+                track_avg = row.get('HistoricalTrackAvgPosition', 0)
+                constr_pts = row.get('ConstructorPoints', 0)
+                constr_st = row.get('ConstructorStanding', 0)
+                grid_pos_val = row.get('GridPosition', 0)
+                recent_form = row.get('RecentForm', 0)
+                
+                # Format values
+                season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
+                constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                grid_pos_str = f"{grid_pos_val:.0f}" if not pd.isna(grid_pos_val) else "N/A"
+                recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                
+                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.2f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {grid_pos_str:<6} {recent_form_str:<6}")
         
         # Save predictions
         output_path = Path(args.output_file)
@@ -1045,8 +1122,8 @@ def main():
             print()
             
             # Show detailed comparison table
-            print(f"{'Driver':<20} {'Pred Rank':<12} {'Actual Pos':<12} {'Starting Pos':<13} {'Error':<10} {'Status':<15}")
-            print("-" * 70)
+            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Start':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
+            print("-" * 150)
             
             for _, row in top10.iterrows():
                 if not pd.isna(row.get('ActualPosition')):
@@ -1071,9 +1148,25 @@ def main():
                     if error <= 3:
                         within_3 += 1
                     
-                    print(f"{driver_name:<20} {pred_rank:<12} {actual_pos:<12} {grid_pos:<13} {error:<10} {status:<15}")
+                    # Get all features
+                    season_pts = row.get('SeasonPoints', 0)
+                    season_avg = row.get('SeasonAvgFinish', 0)
+                    track_avg = row.get('HistoricalTrackAvgPosition', 0)
+                    constr_pts = row.get('ConstructorPoints', 0)
+                    constr_st = row.get('ConstructorStanding', 0)
+                    recent_form = row.get('RecentForm', 0)
+                    
+                    # Format values
+                    season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                    season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                    track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
+                    constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                    constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                    recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                    
+                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<7} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {recent_form_str:<6}")
             
-            print("-" * 70)
+            print("-" * 150)
             print(f"\nSummary:")
             print(f"  Exact matches (error = 0): {exact_matches}/10 ({exact_matches/10*100:.1f}%)")
             print(f"  Within 1 position: {within_1}/10 ({within_1/10*100:.1f}%)")
