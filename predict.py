@@ -104,7 +104,7 @@ def load_model(model_dir: str = 'models', model_type: str = 'neural_network', au
             input_size = getattr(scaler, 'n_features_in_', 7)
             
             # Initialize and load model with correct input size
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            device = torch.device('cpu')
             model = F1NeuralNetwork(
                 input_size=input_size,
                 hidden_sizes=[128, 64, 32],
@@ -734,8 +734,7 @@ def main():
     try:
         model, scaler, model_type, device = load_model(args.model_dir, args.model_type)
         print(f"Model loaded successfully! ({model_type})")
-        if device and device.type == 'cuda':
-            print(f"Using GPU: {device}")
+        print(f"Using device: {device}")
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print(f"\nMake sure you've trained the model first:")

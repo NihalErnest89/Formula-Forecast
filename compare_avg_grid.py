@@ -266,7 +266,7 @@ def main():
     print("=" * 70)
     
     # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print(f"\nUsing device: {device}")
     
     # Load data
