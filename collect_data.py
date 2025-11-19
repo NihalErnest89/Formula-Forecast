@@ -615,6 +615,17 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 # Use current season data
                 form_trend = calculate_form_trend(year_data, driver_num, round_num)
             
+            # Get DNF status if available
+            status = race.get('Status', '')
+            position_text = race.get('PositionText', '')
+            is_dnf = False
+            if pd.notna(status):
+                status_str = str(status).upper()
+                is_dnf = any(x in status_str for x in ['DNF', 'DSQ', 'DNS', 'NC', 'DISQUALIFIED', 'NOT CLASSIFIED'])
+            elif pd.notna(position_text):
+                pos_text_str = str(position_text).upper()
+                is_dnf = any(x in pos_text_str for x in ['DNF', 'DSQ', 'DNS', 'NC'])
+            
             features = {
                 'Year': year,
                 'EventName': track_name,
@@ -631,7 +642,9 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
-                'ActualPosition': race.get('Position', np.nan)
+                'ActualPosition': race.get('Position', np.nan),
+                'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
+                'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''
             }
             training_features.append(features)
     
@@ -772,6 +785,17 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 # Use test season data
                 form_trend = calculate_form_trend(test_data_sorted, driver_num, round_num)
             
+            # Get DNF status if available
+            status = race.get('Status', '')
+            position_text = race.get('PositionText', '')
+            is_dnf = False
+            if pd.notna(status):
+                status_str = str(status).upper()
+                is_dnf = any(x in status_str for x in ['DNF', 'DSQ', 'DNS', 'NC', 'DISQUALIFIED', 'NOT CLASSIFIED'])
+            elif pd.notna(position_text):
+                pos_text_str = str(position_text).upper()
+                is_dnf = any(x in pos_text_str for x in ['DNF', 'DSQ', 'DNS', 'NC'])
+            
             features = {
                 'Year': test_year,
                 'EventName': track_name,
@@ -788,7 +812,9 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
-                'ActualPosition': race.get('Position', np.nan)
+                'ActualPosition': race.get('Position', np.nan),
+                'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
+                'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''
             }
             test_features.append(features)
     

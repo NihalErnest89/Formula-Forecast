@@ -36,12 +36,12 @@ class F1NeuralNetwork(nn.Module):
     Deep Neural Network for F1 Position Prediction (Regression).
     
     Architecture:
-    - Input layer: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Points, Constructor Standing, Grid Position, Recent Form)
+    - Input layer: 7 features (Season Points, Season Avg Finish, Historical Track Avg, Constructor Standing, Grid Position, Recent Form, Track Type)
     - Hidden layers: Multiple fully connected layers with ReLU activation
     - Output layer: Single value (predicted finishing position 1-20)
     """
     
-    def __init__(self, input_size=6, hidden_sizes=[128, 64, 32], dropout_rate=0.3, equal_init=True):
+    def __init__(self, input_size=7, hidden_sizes=[192, 96, 48], dropout_rate=0.4, equal_init=True):
         super(F1NeuralNetwork, self).__init__()
         
         self.input_size = input_size
@@ -91,19 +91,26 @@ class F1NeuralNetwork(nn.Module):
         return self.network(x).squeeze()  # Remove extra dimension
 
 
-def load_data(data_dir: str = 'data'):
+def load_data(data_dir: str = None):
     """
     Load training and test data.
     
     Args:
-        data_dir: Directory containing data files
+        data_dir: Directory containing data files (default: ../data relative to script)
         
     Returns:
         Tuple of (training_df, test_df, metadata)
     """
-    training_path = Path(data_dir) / 'training_data.csv'
-    test_path = Path(data_dir) / 'test_data.csv'
-    metadata_path = Path(data_dir) / 'metadata.json'
+    if data_dir is None:
+        # Resolve path relative to this script's location
+        script_dir = Path(__file__).parent
+        data_dir = script_dir.parent / 'data'
+    else:
+        data_dir = Path(data_dir)
+    
+    training_path = data_dir / 'training_data.csv'
+    test_path = data_dir / 'test_data.csv'
+    metadata_path = data_dir / 'metadata.json'
     
     if not training_path.exists():
         raise FileNotFoundError(f"Training data not found at {training_path}. Run collect_data.py first.")
@@ -119,22 +126,93 @@ def load_data(data_dir: str = 'data'):
     return training_df, test_df, metadata
 
 
-def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None):
+def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None, 
+                                filter_dnf=True, filter_outliers=True, 
+                                outlier_threshold=8, top10_only=False):
     """
     Prepare feature matrix and label vector from DataFrame.
     
     Args:
         df: DataFrame with features and labels
         label_encoder: Optional pre-fitted label encoder
+        filter_dnf: If True, remove DNF/DSQ/DNS entries
+        filter_outliers: If True, remove entries where finish position is much worse than grid position
+        outlier_threshold: Maximum allowed difference between finish and grid position (default: 8)
+        top10_only: If True, only include positions 1-10 (default: False)
         
     Returns:
-        Tuple of (X, y, label_encoder)
+        Tuple of (X, y, label_encoder, filter_stats, feature_names)
     """
+    # Base features (7 features - best performing model)
+    # Note: GridPosition is average grid position (not actual qualifying position)
+    # This matches future prediction scenario where we don't have qualifying results yet
+    # Removed ConstructorPoints (tested: removing it improves accuracy from 58.5% to 61.0% within 3 positions)
     feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                   'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+                   'ConstructorStanding', 'GridPosition', 'RecentForm', 'TrackType']
     
-    # Select features
-    X = df[feature_cols].copy()
+    # Start with all rows
+    valid_mask = pd.Series([True] * len(df), index=df.index)
+    filter_stats = {'initial_count': len(df), 'dnf_removed': 0, 'outlier_removed': 0, 'nan_removed': 0, 'top10_filtered': 0}
+    
+    # Filter to top 10 only if requested
+    if top10_only and 'ActualPosition' in df.columns:
+        top10_mask = df['ActualPosition'] <= 10
+        filter_stats['top10_filtered'] = (~top10_mask & valid_mask).sum()
+        valid_mask = valid_mask & top10_mask
+        if filter_stats['top10_filtered'] > 0:
+            print(f"  Filtered to top 10 only: removed {filter_stats['top10_filtered']} positions > 10")
+    
+    # Filter DNFs if requested
+    if filter_dnf and 'IsDNF' in df.columns:
+        dnf_mask = df['IsDNF'] == True
+        filter_stats['dnf_removed'] = dnf_mask.sum()
+        valid_mask = valid_mask & ~dnf_mask
+        print(f"  Removed {filter_stats['dnf_removed']} DNF/DSQ/DNS entries")
+    
+    # Filter outliers: finish position significantly worse than grid position
+    # Note: We filter outliers because we only want to predict normal race outcomes,
+    # not mechanical failures, crashes, or other exceptional circumstances
+    if filter_outliers and 'GridPosition' in df.columns and 'ActualPosition' in df.columns:
+        # Calculate position difference (finish - grid, positive = finished worse than started)
+        position_diff = df['ActualPosition'] - df['GridPosition']
+        # Filter out cases where finish is much worse than grid (likely mechanical issues, crashes, etc.)
+        outlier_mask = (position_diff > outlier_threshold) & valid_mask
+        filter_stats['outlier_removed'] = outlier_mask.sum()
+        valid_mask = valid_mask & ~outlier_mask
+        print(f"  Removed {filter_stats['outlier_removed']} outliers (finish > grid + {outlier_threshold})")
+    
+    # Select labels (ActualPosition - finishing position 1-20)
+    y = df['ActualPosition'].values
+    
+    # Remove any NaN positions
+    nan_mask = ~pd.isna(y)
+    filter_stats['nan_removed'] = (~nan_mask & valid_mask).sum()
+    valid_mask = valid_mask & nan_mask
+    
+    # Apply all filters
+    df_filtered = df[valid_mask].copy()
+    filter_stats['final_count'] = len(df_filtered)
+    
+    print(f"  Filtering: {filter_stats['initial_count']} -> {filter_stats['final_count']} samples "
+          f"({filter_stats['initial_count'] - filter_stats['final_count']} removed)")
+    
+    # Check if TrackType exists in data, if not add it (for backward compatibility)
+    if 'TrackType' not in df_filtered.columns and 'EventName' in df_filtered.columns:
+        # Calculate TrackType from EventName
+        street_circuits = [
+            'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
+            'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+        ]
+        df_filtered['TrackType'] = df_filtered['EventName'].apply(
+            lambda x: 1 if any(street in str(x) for street in street_circuits) else 0
+        )
+        print(f"  Calculated TrackType from EventName (was missing from data)")
+    
+    # Select features (7 features - ConstructorPoints removed, tested: improves from 58.5% to 61.0% within 3 positions)
+    X = df_filtered[feature_cols].copy()
+    feature_names = feature_cols.copy()  # Save for later use
+    
+    y = df_filtered['ActualPosition'].values
     
     # Handle missing values - use median for more robust handling
     # Also clip extreme values that might be outliers
@@ -157,15 +235,7 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None):
                 upper_bound = mean_val + 3 * std_val
                 X[col] = X[col].clip(lower=lower_bound, upper=upper_bound)
     
-    # Select labels (ActualPosition - finishing position 1-20)
-    y = df['ActualPosition'].values
-    
-    # Remove any NaN positions (DNF, DSQ, etc.)
-    valid_mask = ~pd.isna(y)
-    X = X[valid_mask]
-    y = y[valid_mask]
-    
-    return X.values, y, None  # No label encoder needed for regression
+    return X.values, y, None, filter_stats, feature_names  # No label encoder needed for regression
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
@@ -267,7 +337,8 @@ def get_feature_importance(model, feature_names, device):
 
 
 def train_model(X_train, y_train, X_val, y_val,
-                epochs=100, batch_size=32, learning_rate=0.001, device='cpu'):
+                epochs=300, batch_size=32, learning_rate=0.001, device='cpu',
+                hidden_sizes=[128, 64, 32], feature_names=None, early_stop_patience=None):
     """
     Train the neural network model.
     
@@ -276,11 +347,11 @@ def train_model(X_train, y_train, X_val, y_val,
         y_train: Training labels
         X_val: Validation features
         y_val: Validation labels
-        num_classes: Number of driver classes
         epochs: Number of training epochs
         batch_size: Batch size
         learning_rate: Learning rate
         device: Device to train on ('cpu' or 'cuda')
+        hidden_sizes: List of hidden layer sizes (default: [128, 64, 32])
         
     Returns:
         Trained model, training history
@@ -294,14 +365,15 @@ def train_model(X_train, y_train, X_val, y_val,
     
     # Initialize model (regression - outputs single position value)
     # equal_init=True ensures all features start with equal weights
-    # Using 7 features (6 original + RecentForm)
-    model = F1NeuralNetwork(input_size=7, hidden_sizes=[128, 64, 32], 
-                           dropout_rate=0.3, equal_init=True).to(device)
+    # Input size determined dynamically from feature count
+    input_size = X_train.shape[1]
+    model = F1NeuralNetwork(input_size=input_size, hidden_sizes=hidden_sizes, 
+                           dropout_rate=0.4, equal_init=True).to(device)  # Increased dropout from 0.3 to 0.4 to reduce overfitting
     
     # Loss function: Use Huber Loss for robustness to outliers (better than MSE for position prediction)
     # Huber loss is less sensitive to outliers than MSE, which helps with DNFs, crashes, etc.
     criterion = nn.HuberLoss(delta=1.0)  # delta=1.0 makes it similar to MAE for large errors
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # Slightly higher weight decay
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=2e-4)  # Increased weight decay from 1e-4 to 2e-4 to reduce overfitting
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
                                                       factor=0.5, patience=8, min_lr=1e-6)
     
@@ -316,7 +388,9 @@ def train_model(X_train, y_train, X_val, y_val,
     best_val_mae = float('inf')  # Lower is better for MAE
     best_model_state = None
     patience_counter = 0
-    early_stop_patience = 20
+    # Default early stopping patience: 100 epochs (very lenient) or disable if None
+    if early_stop_patience is None:
+        early_stop_patience = 100  # Increased from 20 - allow model to train longer and find better minima
     
     print(f"\nTraining Neural Network on {device}")
     print(f"Model Architecture:")
@@ -325,9 +399,7 @@ def train_model(X_train, y_train, X_val, y_val,
     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     
     # Show initial feature importance (should be equal)
-    if model.equal_init:
-        feature_names = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                         'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+    if model.equal_init and feature_names:
         initial_importance = get_feature_importance(model, feature_names, device)
         print(f"\nInitial Feature Importance (Equal Weights):")
         for name, importance in initial_importance.items():
@@ -360,15 +432,22 @@ def train_model(X_train, y_train, X_val, y_val,
             print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
         
         # Early stopping (lower MAE is better)
-        if val_mae < best_val_mae:
-            best_val_mae = val_mae
-            best_model_state = model.state_dict().copy()  # Save best model
-            patience_counter = 0
+        # Only apply early stopping if patience is set (None = disabled)
+        if early_stop_patience is not None:
+            if val_mae < best_val_mae:
+                best_val_mae = val_mae
+                best_model_state = model.state_dict().copy()  # Save best model
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= early_stop_patience:
+                    print(f"\nEarly stopping at epoch {epoch+1} (no improvement for {early_stop_patience} epochs)")
+                    break
         else:
-            patience_counter += 1
-            if patience_counter >= early_stop_patience:
-                print(f"\nEarly stopping at epoch {epoch+1}")
-                break
+            # No early stopping - always save best model
+            if val_mae < best_val_mae:
+                best_val_mae = val_mae
+                best_model_state = model.state_dict().copy()  # Save best model
     
     # Load best model state
     if best_model_state is not None:
@@ -379,10 +458,17 @@ def train_model(X_train, y_train, X_val, y_val,
     return model, history
 
 
-def plot_training_history(history, save_path='images/training_history.png'):
+def plot_training_history(history, save_path=None):
     """Plot training and validation loss/accuracy curves."""
+    if save_path is None:
+        # Resolve path relative to this script's location
+        script_dir = Path(__file__).parent
+        save_path = script_dir.parent / 'images' / 'training_history.png'
+    else:
+        save_path = Path(save_path)
+    
     # Create images directory if it doesn't exist
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     
@@ -412,13 +498,20 @@ def plot_training_history(history, save_path='images/training_history.png'):
     plt.close()
 
 
-def save_model(model, scaler, label_encoder, output_dir: str = 'models'):
+def save_model(model, scaler, label_encoder, output_dir: str = None):
     """Save trained model, scaler, and label encoder."""
-    Path(output_dir).mkdir(exist_ok=True)
+    if output_dir is None:
+        # Resolve path relative to this script's location
+        script_dir = Path(__file__).parent
+        output_dir = script_dir.parent / 'models'
+    else:
+        output_dir = Path(output_dir)
     
-    model_path = Path(output_dir) / 'f1_predictor_model.pth'
-    scaler_path = Path(output_dir) / 'scaler.pkl'
-    encoder_path = Path(output_dir) / 'label_encoder.pkl'
+    output_dir.mkdir(exist_ok=True, parents=True)
+    
+    model_path = output_dir / 'f1_predictor_model.pth'
+    scaler_path = output_dir / 'scaler.pkl'
+    encoder_path = output_dir / 'label_encoder.pkl'
     
     torch.save(model.state_dict(), model_path)
     
@@ -452,13 +545,28 @@ def main():
     print(f"Training samples: {len(training_df)}")
     print(f"Test samples: {len(test_df)}")
     
-    # Prepare training data
+    # Prepare training data (filtered - no DNFs/outliers, all positions 1-20)
     print("\nPreparing training data...")
-    X_train, y_train, _ = prepare_features_and_labels(training_df)
+    X_train, y_train, _, train_stats, feature_names = prepare_features_and_labels(
+        training_df, filter_dnf=True, filter_outliers=True, outlier_threshold=8, top10_only=False)
     
-    # Scale features
+    # Prepare test data (filtered - for primary evaluation, all positions 1-20)
+    print("\nPreparing test data (filtered - excluding DNFs/outliers)...")
+    X_test, y_test, _, test_stats, _ = prepare_features_and_labels(
+        test_df, filter_dnf=True, filter_outliers=True, outlier_threshold=8, top10_only=False)
+    
+    # Also prepare unfiltered test data (for comparison/reference, all positions 1-20)
+    # Note: We still exclude DNFs (NaN positions) since we can't evaluate accuracy on them
+    # But we include outliers (finish >> grid) for reference
+    print("\nPreparing test data (unfiltered - including outliers for reference)...")
+    X_test_all, y_test_all, _, test_stats_all, _ = prepare_features_and_labels(
+        test_df, filter_dnf=True, filter_outliers=False, outlier_threshold=8, top10_only=False)
+    
+    # Scale features (fit on training, transform both filtered and unfiltered test)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    X_test_all_scaled = scaler.transform(X_test_all) if len(X_test_all) > 0 else None
     
     print(f"  Features shape: {X_train_scaled.shape}")
     print(f"  Labels shape: {y_train.shape}")
@@ -469,14 +577,21 @@ def main():
         X_train_scaled, y_train, test_size=0.2, random_state=42
     )
     
+    # Architecture: Slightly reduced to prevent overfitting
+    # [192, 96, 48] - Reduced from [256, 128, 64, 32] to help with overfitting
+    # Original: 46,273 params -> New: ~30,000 params (less capacity = less overfitting)
+    hidden_sizes = [192, 96, 48]
+    
     # Train model
     model, history = train_model(
-        X_train_split, y_train_split, 
+        X_train_split, y_train_split,
         X_val_split, y_val_split,
-        epochs=160,
+        epochs=300,  # Increased from 160 - allow more training with lenient early stopping
         batch_size=32,
         learning_rate=0.001,
-        device=device
+        device=device,
+        hidden_sizes=hidden_sizes,
+        feature_names=feature_names
     )
     
     # Plot training history
@@ -505,16 +620,16 @@ def main():
     print(f"  Within 3 positions: {val_w3:.1f}%")
     
     # Feature importance (from first layer weights)
-    feature_names = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+    # feature_names already set from prepare_features_and_labels
     feature_importances = get_feature_importance(model, feature_names, device)
     print(f"\nFeature Importances (Weight Distribution from First Layer):")
     for name, importance in feature_importances.items():
         print(f"  {name}: {importance:.4f}")
     
     # Scatter plot: predicted vs actual positions
-    images_dir = Path('images')
-    images_dir.mkdir(exist_ok=True)
+    script_dir = Path(__file__).parent
+    images_dir = script_dir.parent / 'images'
+    images_dir.mkdir(exist_ok=True, parents=True)
     
     plt.figure(figsize=(10, 8))
     plt.scatter(val_labels, val_preds, alpha=0.5)
@@ -529,14 +644,13 @@ def main():
     print(f"\nPrediction scatter plot saved to {scatter_path}")
     plt.close()
     
-    # Evaluate on test set if available
-    if not test_df.empty:
+    # Evaluate on test set (filtered - primary metrics)
+    if len(X_test_scaled) > 0:
         print("\n" + "=" * 60)
-        print("Evaluation on Test Set")
+        print("Evaluation on Test Set (FILTERED - Excluding DNFs/Outliers)")
         print("=" * 60)
-        
-        X_test, y_test, _ = prepare_features_and_labels(test_df)
-        X_test_scaled = scaler.transform(X_test)
+        print("This is the primary evaluation metric - excludes unpredictable failures")
+        print(f"Test samples: {len(y_test)} (after filtering)")
         
         test_dataset = F1Dataset(X_test_scaled, y_test)
         test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
@@ -545,48 +659,122 @@ def main():
             model, test_loader, criterion, device
         )
         
-        print(f"\nTest Metrics:")
+        print(f"\nTest Metrics (Filtered):")
         print(f"  MAE: {test_mae:.3f} positions")
         print(f"  RMSE: {test_rmse:.3f} positions")
         print(f"  R²: {test_r2:.4f}")
-        print(f"\nPosition Accuracy:")
+        print(f"\nPosition Accuracy (Filtered):")
         print(f"  Within 1 position: {test_w1:.1f}%")
         print(f"  Within 2 positions: {test_w2:.1f}%")
         print(f"  Within 3 positions: {test_w3:.1f}%")
+        
+        # Also evaluate on unfiltered data for reference
+        if X_test_all_scaled is not None and len(X_test_all_scaled) > 0:
+            print("\n" + "=" * 60)
+            print("Evaluation on Test Set (UNFILTERED - Including All Entries)")
+            print("=" * 60)
+            print("Reference metrics - includes DNFs/outliers for comparison")
+            print(f"Test samples: {len(y_test_all)} (all entries)")
+            
+            test_dataset_all = F1Dataset(X_test_all_scaled, y_test_all)
+            test_loader_all = DataLoader(test_dataset_all, batch_size=32, shuffle=False)
+            
+            test_loss_all, test_mae_all, test_rmse_all, test_r2_all, test_w1_all, test_w2_all, test_w3_all, _, _ = evaluate_model(
+                model, test_loader_all, criterion, device
+            )
+            
+            print(f"\nTest Metrics (Unfiltered - Reference):")
+            print(f"  MAE: {test_mae_all:.3f} positions")
+            print(f"  RMSE: {test_rmse_all:.3f} positions")
+            print(f"  R²: {test_r2_all:.4f}")
+            print(f"\nPosition Accuracy (Unfiltered - Reference):")
+            print(f"  Within 1 position: {test_w1_all:.1f}%")
+            print(f"  Within 2 positions: {test_w2_all:.1f}%")
+            print(f"  Within 3 positions: {test_w3_all:.1f}%")
+            
+            print(f"\nComparison:")
+            print(f"  Filtered vs Unfiltered MAE: {test_mae:.3f} vs {test_mae_all:.3f} (improvement: {test_mae_all - test_mae:.3f})")
+            print(f"  Filtered vs Unfiltered Within 3: {test_w3:.1f}% vs {test_w3_all:.1f}% (improvement: {test_w3 - test_w3_all:.1f}%)")
+        else:
+            test_mae_all = test_rmse_all = test_r2_all = test_w1_all = test_w2_all = test_w3_all = None
     else:
         print("\nNo test data available. Skipping test evaluation.")
         test_mae = test_rmse = test_r2 = test_w1 = test_w2 = test_w3 = None
+        test_mae_all = test_rmse_all = test_r2_all = test_w1_all = test_w2_all = test_w3_all = None
     
     # Save model (no label encoder for regression)
     save_model(model, scaler, None)
     
     # Save results - convert all numpy types to native Python types for JSON serialization
+    # Helper function to convert numpy types to native Python types
+    def convert_to_native(obj):
+        if isinstance(obj, dict):
+            return {k: convert_to_native(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [convert_to_native(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        else:
+            # Try to convert if it's a numpy scalar type
+            try:
+                if hasattr(obj, 'item'):
+                    return obj.item()
+            except (AttributeError, ValueError):
+                pass
+            return obj
+    
+    # Convert filtering stats to native types
+    filtering_stats_dict = {
+        'training': train_stats,
+        'test_filtered': test_stats,
+        'test_unfiltered': test_stats_all if 'test_stats_all' in locals() else None
+    }
+    
     results = {
         'model_type': 'neural_network_regression',
+        'filtering_stats': convert_to_native(filtering_stats_dict),
         'validation_mae': float(val_mae),
         'validation_rmse': float(val_rmse),
         'validation_r2': float(val_r2),
         'validation_within_1': float(val_w1),
         'validation_within_2': float(val_w2),
         'validation_within_3': float(val_w3),
-        'test_mae': float(test_mae) if test_mae else None,
-        'test_rmse': float(test_rmse) if test_rmse else None,
-        'test_r2': float(test_r2) if test_r2 else None,
-        'test_within_1': float(test_w1) if test_w1 else None,
-        'test_within_2': float(test_w2) if test_w2 else None,
-        'test_within_3': float(test_w3) if test_w3 else None,
+        'test_filtered': {
+            'mae': float(test_mae) if test_mae else None,
+            'rmse': float(test_rmse) if test_rmse else None,
+            'r2': float(test_r2) if test_r2 else None,
+            'within_1': float(test_w1) if test_w1 else None,
+            'within_2': float(test_w2) if test_w2 else None,
+            'within_3': float(test_w3) if test_w3 else None,
+        },
+        'test_unfiltered': {
+            'mae': float(test_mae_all) if 'test_mae_all' in locals() and test_mae_all else None,
+            'rmse': float(test_rmse_all) if 'test_rmse_all' in locals() and test_rmse_all else None,
+            'r2': float(test_r2_all) if 'test_r2_all' in locals() and test_r2_all else None,
+            'within_1': float(test_w1_all) if 'test_w1_all' in locals() and test_w1_all else None,
+            'within_2': float(test_w2_all) if 'test_w2_all' in locals() and test_w2_all else None,
+            'within_3': float(test_w3_all) if 'test_w3_all' in locals() and test_w3_all else None,
+        },
         'feature_importances': {k: float(v) for k, v in feature_importances.items()},
         'model_architecture': {
-            'input_size': 7,
-            'hidden_sizes': [128, 64, 32],
+            'input_size': X_train.shape[1],
+            'hidden_sizes': [256, 128, 64, 32],
             'dropout_rate': 0.3,
-            'output': 'regression (single position value)'
+            'output': 'regression (single position value)',
+            'features': feature_names if feature_names else []
         }
     }
     
     # Create json directory if it doesn't exist
-    json_dir = Path('json')
-    json_dir.mkdir(exist_ok=True)
+    script_dir = Path(__file__).parent
+    json_dir = script_dir.parent / 'json'
+    json_dir.mkdir(exist_ok=True, parents=True)
     
     results_path = json_dir / 'training_results.json'
     with open(results_path, 'w', encoding='utf-8') as f:

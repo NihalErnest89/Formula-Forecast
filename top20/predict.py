@@ -13,9 +13,9 @@ import torch
 import torch.nn as nn
 # Lazy import fastf1 - only import when needed for future race selection
 
-# Feature columns (7 features)
+# Feature columns (7 features - ConstructorPoints removed for better accuracy)
 FEATURE_COLS = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
+                'ConstructorStanding', 'GridPosition', 'RecentForm', 'TrackType']
 
 
 def get_status(error: int) -> str:
@@ -59,7 +59,7 @@ def make_predictions(X_scaled: np.ndarray, model, model_type: str, device=None) 
 class F1NeuralNetwork(nn.Module):
     """Neural Network model definition (must match training - regression)."""
     
-    def __init__(self, input_size=7, hidden_sizes=[128, 64, 32], dropout_rate=0.3):
+    def __init__(self, input_size=7, hidden_sizes=[192, 96, 48], dropout_rate=0.4):
         super(F1NeuralNetwork, self).__init__()
         
         layers = []
@@ -79,36 +79,43 @@ class F1NeuralNetwork(nn.Module):
         return self.network(x).squeeze()
 
 
-def load_model(model_dir: str = 'models', model_type: str = 'neural_network', auto_fallback: bool = True):
+def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_fallback: bool = True):
     """
     Load trained model and scaler.
     
     Args:
-        model_dir: Directory containing model files
+        model_dir: Directory containing model files (default: ../models relative to script)
         model_type: 'neural_network' or 'random_forest'
         auto_fallback: If True, try the other model type if requested one is not found
         
     Returns:
         Tuple of (model, scaler, model_type, device)
     """
+    if model_dir is None:
+        # Resolve path relative to this script's location
+        script_dir = Path(__file__).parent
+        model_dir = script_dir.parent / 'models'
+    else:
+        model_dir = Path(model_dir)
+    
     if model_type == 'neural_network':
-        nn_model_path = Path(model_dir) / 'f1_predictor_model.pth'
-        nn_scaler_path = Path(model_dir) / 'scaler.pkl'
+        nn_model_path = model_dir / 'f1_predictor_model.pth'
+        nn_scaler_path = model_dir / 'scaler.pkl'
         
         if nn_model_path.exists() and nn_scaler_path.exists():
             # Load scaler first to determine input size
             with open(nn_scaler_path, 'rb') as f:
                 scaler = pickle.load(f)
             
-            # Get input size from scaler (should be 7)
+            # Get input size from scaler (should be 7 - ConstructorPoints removed for better accuracy)
             input_size = getattr(scaler, 'n_features_in_', 7)
             
             # Initialize and load model with correct input size
             device = torch.device('cpu')
             model = F1NeuralNetwork(
                 input_size=input_size,
-                hidden_sizes=[128, 64, 32],
-                dropout_rate=0.3
+                hidden_sizes=[192, 96, 48],  # Updated architecture to reduce overfitting
+                dropout_rate=0.4
             ).to(device)
             model.load_state_dict(torch.load(nn_model_path, map_location=device))
             model.eval()
@@ -124,8 +131,8 @@ def load_model(model_dir: str = 'models', model_type: str = 'neural_network', au
     
     # Try Random Forest (either requested or as fallback)
     if model_type == 'random_forest':
-        rf_model_path = Path(model_dir) / 'f1_predictor_model_rf.pkl'
-        rf_scaler_path = Path(model_dir) / 'scaler_rf.pkl'
+        rf_model_path = model_dir / 'f1_predictor_model_rf.pkl'
+        rf_scaler_path = model_dir / 'scaler_rf.pkl'
         
         if rf_model_path.exists() and rf_scaler_path.exists():
             with open(rf_model_path, 'rb') as f:
@@ -174,11 +181,14 @@ def predict_position(season_points: float, season_avg_finish: float,
     Returns:
         Predicted finishing position (1-20)
     """
-    # Use 7 features (current standard)
+    # Use 7 features (ConstructorPoints removed for better accuracy)
+    # Note: This function is deprecated - use predict_race_top10 instead which handles TrackType
+    # TrackType defaults to 0 (permanent circuit) if not provided
     if recent_form is None:
         recent_form = np.nan  # Use NaN if not provided
+    track_type = 0  # Default to permanent circuit if not provided
     features = np.array([[season_points, season_avg_finish, historical_track_avg,
-                          constructor_points, constructor_standing, grid_position, recent_form]])
+                          constructor_standing, grid_position, recent_form, track_type]])
     
     # Handle NaN values
     features = np.nan_to_num(features, nan=np.nanmedian(features, axis=0))
@@ -209,7 +219,7 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     Args:
         drivers_df: DataFrame with one row per driver, containing:
                    ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                    'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'DriverNumber', 'DriverName']
+                    'ConstructorStanding', 'GridPosition', 'RecentForm', 'TrackType', 'DriverNumber', 'DriverName']
         model: Trained model
         scaler: Fitted scaler
         model_type: 'neural_network' or 'random_forest'
@@ -229,7 +239,7 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     X_scaled = scaler.transform(X)
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
     
-    # Ensure positions are in valid range
+    # Ensure positions are in valid range (1-20)
     predicted_positions = np.clip(predicted_positions, 1, 20)
     
     # Add predictions to DataFrame
@@ -274,7 +284,7 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     X_scaled = scaler.transform(X)
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
     
-    # Ensure positions are in valid range
+    # Ensure positions are in valid range (1-20)
     predicted_positions = np.clip(predicted_positions, 1, 20)
     
     # Add predictions to DataFrame
@@ -386,6 +396,13 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
                     if len(valid_grid) > 0:
                         driver_grid_avg = valid_grid.mean()
         
+        # Calculate TrackType (street circuit = 1, permanent = 0)
+        street_circuits = [
+            'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
+            'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+        ]
+        track_type = 1 if any(street in track_name for street in street_circuits) else 0
+        
         # Use features from the most recent race, but update track-specific data
         features = {
             'Year': selected_year,
@@ -398,6 +415,7 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             'ConstructorStanding': driver_row.get('ConstructorStanding', 10),
             'GridPosition': driver_grid_avg,  # Use driver's historical average grid position
             'RecentForm': driver_row.get('RecentForm', np.nan),  # Recent form from most recent race
+            'TrackType': track_type,  # Street circuit (1) or permanent (0)
             'DriverNumber': driver_num,
             'DriverName': driver_name,
             'ActualPosition': np.nan  # Future race, no actual position
@@ -428,6 +446,7 @@ def update_future_race_features_progressive(race_df: pd.DataFrame, previous_stat
             updated_df.at[idx, 'ConstructorPoints'] = prev_row.get('ConstructorPoints', row.get('ConstructorPoints', 0))
             updated_df.at[idx, 'ConstructorStanding'] = prev_row.get('ConstructorStanding', row.get('ConstructorStanding', 10))
             updated_df.at[idx, 'RecentForm'] = prev_row.get('RecentForm', row.get('RecentForm', np.nan))
+            # TrackType doesn't change (it's track-specific), so keep it from current row
     
     return updated_df
 
@@ -681,7 +700,8 @@ def select_race_interactive(test_df: pd.DataFrame, training_df: pd.DataFrame = N
             # Calculate features for future race using most recent completed race
             # Load training data if not already loaded
             if 'training_df' not in locals():
-                training_data_path = Path('data') / 'training_data.csv'
+                script_dir = Path(__file__).parent
+                training_data_path = script_dir.parent / 'data' / 'training_data.csv'
                 training_df_local = None
                 if training_data_path.exists():
                     try:
@@ -753,7 +773,8 @@ def main():
         input_source = args.input_file
     else:
         # Try to use test data
-        test_data_path = Path('data') / 'test_data.csv'
+        script_dir = Path(__file__).parent
+        test_data_path = script_dir.parent / 'data' / 'test_data.csv'
         if not test_data_path.exists():
             print("\nError: No input file provided and test data not found.")
             print(f"  Expected test data at: {test_data_path}")
@@ -762,9 +783,10 @@ def main():
             print("  - SeasonPoints")
             print("  - SeasonAvgFinish")
             print("  - HistoricalTrackAvgPosition")
-            print("  - ConstructorPoints")
             print("  - ConstructorStanding")
             print("  - GridPosition")
+            print("  - RecentForm")
+            print("  - TrackType")
             print("  - DriverNumber (optional)")
             print("  - DriverName (optional)")
             print("\nExample:")
@@ -858,7 +880,8 @@ def main():
                 # Track current state for progressive feature updates across future races
                 current_state_df = None
                 # Load training data for historical track averages
-                training_data_path = Path('data') / 'training_data.csv'
+                script_dir = Path(__file__).parent
+                training_data_path = script_dir.parent / 'data' / 'training_data.csv'
                 training_df_all = None
                 if training_data_path.exists():
                     try:
@@ -1097,7 +1120,7 @@ def main():
             print(f"\nAll {len(all_results)} driver predictions saved to {output_path}")
         else:
             top10.to_csv(output_path, index=False)
-            print(f"\nTop 10 predictions saved to {output_path}")
+            print(f"\nTop 5 predictions saved to {output_path}")
         
         # Show summary statistics
         print(f"\nSummary:")
@@ -1117,7 +1140,7 @@ def main():
             print(f"\n" + "=" * 70)
             print(f"RANKING ACCURACY ANALYSIS")
             print("=" * 70)
-            print(f"Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)")
+            print(f"Comparing: Predicted Rank (1-5) vs Actual Finishing Position (1-20)")
             print()
             
             # Show detailed comparison table
