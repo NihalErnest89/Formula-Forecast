@@ -399,7 +399,7 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
         # Calculate TrackType (street circuit = 1, permanent = 0)
         street_circuits = [
             'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
-            'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+            'Saudi Arabian'
         ]
         track_type = 1 if any(street in track_name for street in street_circuits) else 0
         

@@ -1,11 +1,34 @@
 # Fast F1 cache directory (can get large)
 cache/
 
-# Data directory
+# Data directory (training/test data - contains sensitive race data)
 data/
+*.csv
+!requirements.txt
 
-# Model files
+# Model files (trained models - can be regenerated)
 models/
+*.pth
+*.pkl
+*.h5
+*.pt
+
+# Output directories (generated files)
+images/
+json/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# Results and logs
+*.json
+!requirements.txt
+!plan.md
+training_results*.json
+*_results.json
+*_comparison.json
 
 # Python cache
 __pycache__/
@@ -13,26 +36,43 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.egg-info/
+dist/
+build/
 
 # Virtual environments
 venv/
 env/
 ENV/
+.venv/
+.ENV/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Output files
-*.png
-*.jpg
-*.json
-!requirements.txt
-!plan.md
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*~
 

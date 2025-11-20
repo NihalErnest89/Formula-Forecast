@@ -201,7 +201,7 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
         # Calculate TrackType from EventName
         street_circuits = [
             'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
-            'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+            'Saudi Arabian'
         ]
         df_filtered['TrackType'] = df_filtered['EventName'].apply(
             lambda x: 1 if any(street in str(x) for street in street_circuits) else 0

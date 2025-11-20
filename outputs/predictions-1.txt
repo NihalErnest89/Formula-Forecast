@@ -1,0 +1,937 @@
+F1 Race Position Prediction
+======================================================================
+Model Type: neural_network
+======================================================================
+Loading model...
+Model loaded successfully! (neural_network)
+Using device: cpu
+
+Loading test data from c:\Users\nerne\Documents\Nihal\College\UC Santa Cruz\Grad\Year 2\CSE 244a\Need-For-Predictions\data\test_data.csv...
+
+======================================================================
+Available Years:
+======================================================================
+  1. 2025
+
+Select year (1-1) or 'q' to quit: 1
+req         WARNING     DEFAULT CACHE ENABLED! (454.57 MB) C:\Users\nerne\AppData\Local\Temp\fastf1
+
+======================================================================
+Available Races for 2025:
+======================================================================
+  1. Pre-Season Testing (Round 0)
+  2. Australian Grand Prix (Round 1)
+  3. Chinese Grand Prix (Round 2)
+  4. Japanese Grand Prix (Round 3)
+  5. Bahrain Grand Prix (Round 4)
+  6. Saudi Arabian Grand Prix (Round 5)
+  7. Miami Grand Prix (Round 6)
+  8. Emilia Romagna Grand Prix (Round 7)
+  9. Monaco Grand Prix (Round 8)
+  10. Spanish Grand Prix (Round 9)
+  11. Canadian Grand Prix (Round 10)
+  12. Austrian Grand Prix (Round 11)
+  13. British Grand Prix (Round 12)
+  14. Belgian Grand Prix (Round 13)
+  15. Hungarian Grand Prix (Round 14)
+  16. Dutch Grand Prix (Round 15)
+  17. Italian Grand Prix (Round 16)
+  18. Azerbaijan Grand Prix (Round 17)
+  19. Singapore Grand Prix (Round 18)
+  20. United States Grand Prix (Round 19)
+  21. Mexico City Grand Prix (Round 20)
+  22. São Paulo Grand Prix (Round 21)
+  23. Las Vegas Grand Prix (Round 22) [FUTURE]
+  24. Qatar Grand Prix (Round 23) [FUTURE]
+  25. Abu Dhabi Grand Prix (Round 24) [FUTURE]
+
+Select race (1-25) or 'q' to quit or 'all' to predict all 2025 races: all
+
+Processing all 25 races for 2025...
+  [1/25] Processing Pre-Season Testing (Round 0)...
+  [2/25] Processing Australian Grand Prix (Round 1)...
+  [3/25] Processing Chinese Grand Prix (Round 2)...
+  [4/25] Processing Japanese Grand Prix (Round 3)...
+  [5/25] Processing Bahrain Grand Prix (Round 4)...
+  [6/25] Processing Saudi Arabian Grand Prix (Round 5)...
+  [7/25] Processing Miami Grand Prix (Round 6)...
+  [8/25] Processing Emilia Romagna Grand Prix (Round 7)...
+  [9/25] Processing Monaco Grand Prix (Round 8)...
+  [10/25] Processing Spanish Grand Prix (Round 9)...
+  [11/25] Processing Canadian Grand Prix (Round 10)...
+  [12/25] Processing Austrian Grand Prix (Round 11)...
+  [13/25] Processing British Grand Prix (Round 12)...
+  [14/25] Processing Belgian Grand Prix (Round 13)...
+  [15/25] Processing Hungarian Grand Prix (Round 14)...
+  [16/25] Processing Dutch Grand Prix (Round 15)...
+  [17/25] Processing Italian Grand Prix (Round 16)...
+  [18/25] Processing Azerbaijan Grand Prix (Round 17)...
+  [19/25] Processing Singapore Grand Prix (Round 18)...
+  [20/25] Processing United States Grand Prix (Round 19)...
+  [21/25] Processing Mexico City Grand Prix (Round 20)...
+  [22/25] Processing São Paulo Grand Prix (Round 21)...
+  [23/25] Processing Las Vegas Grand Prix (Round 22)...
+  Calculating features from 439 completed races (most recent: Round 21)
+  [24/25] Processing Qatar Grand Prix (Round 23)...
+  Calculating features from 439 completed races (most recent: Round 21)
+  [25/25] Processing Abu Dhabi Grand Prix (Round 24)...
+  Calculating features from 439 completed races (most recent: Round 21)
+
+======================================================================
+PREDICTING ALL 25 RACES FOR All 2025 races
+======================================================================
+
+
+======================================================================
+Race 1/25: Pre-Season Testing (2025, Round 0)
+======================================================================
+  Found 20 drivers
+c:\Users\nerne\Documents\Nihal\College\UC Santa Cruz\Grad\Year 2\CSE 244a\Need-For-Predictions\top10\predict.py:39: RuntimeWarning: Mean of empty slice        
+  col_means = np.nanmean(X, axis=0)
+c:\Users\nerne\Documents\Nihal\College\UC Santa Cruz\Grad\Year 2\CSE 244a\Need-For-Predictions\top10\predict.py:42: RuntimeWarning: All-NaN slice encountered
+  median_val = np.nanmedian(X[:, i])
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+RUS          1      1        5        0       Exact    0        N/A      4.50      10        N/A     Permanent
+VER          2      2        3        0       Exact    0        N/A      1.50      10        N/A     Permanent
+NOR          3      3        6        0       Exact    0        N/A      1.50      10        N/A     Permanent
+PIA          4      4        7        0       Exact    0        N/A      3.50      10        N/A     Permanent
+ANT          5      5        4        0       Exact    0        N/A      10.00     10        N/A     Permanent
+LEC          6      6        4        0       Exact    0        N/A      7.00      10        N/A     Permanent
+ALO          7      7        8        0       Exact    0        N/A      7.50      10        N/A     Permanent
+HAM          8      8        7        0       Exact    0        N/A      4.50      10        N/A     Permanent
+BEA          9      9        9        0       Exact    0        N/A      10.00     10        N/A     Permanent
+SAI          10     10       5        0       Exact    0        N/A      8.50      10        N/A     Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 3.73
+  Average predicted position (top 10): 3.73
+
+Ranking Accuracy:
+  Exact matches: 10/10 (100.0%)
+  Within 1 position: 10/10 (100.0%)
+  Within 2 positions: 10/10 (100.0%)
+  Within 3 positions: 10/10 (100.0%)
+
+======================================================================
+Race 2/25: Australian Grand Prix (2025, Round 1)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+VER          1      2        3        1       Close    417      3.56     12.67     3         3.80    Permanent
+RUS          2      3        5        1       Close    238      6.64     12.67     4         3.80    Permanent
+NOR          3      1        6        2       Good     369      4.16     4.67      1         5.00    Permanent
+LEC          4      8        4        4       Poor     337      4.56     7.67      2         3.40    Permanent
+PIA          5      9        7        4       Poor     280      5.04     6.00      1         7.20    Permanent
+SAI          6      18       5        12      Poor     268      5.75     11.00     2         5.60    Permanent
+HAM          7      10       7        3       Fair     215      6.92     8.00      4         6.40    Permanent
+ALO          8      17       8        9       Poor     74       10.08    9.33      5         11.80   Permanent
+OCO          9      13       11       4       Poor     23       13.67    12.33     6         14.00   Permanent
+BOR          10     16       12       6       Poor     0        N/A      19.00     10        N/A     Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.35
+  Worst in top 10: Position 7.89
+  Average predicted position (top 10): 4.86
+
+Ranking Accuracy:
+  Exact matches: 0/10 (0.0%)
+  Within 1 position: 2/10 (20.0%)
+  Within 2 positions: 3/10 (30.0%)
+  Within 3 positions: 4/10 (40.0%)
+
+======================================================================
+Race 3/25: Chinese Grand Prix (2025, Round 2)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        7        0       Exact    14       6.50     8.00      2         6.50    Permanent
+NOR          2      2        6        0       Exact    40       2.00     2.00      2         2.00    Permanent
+RUS          3      3        5        0       Exact    40       2.00     6.00      1         2.00    Permanent
+VER          4      4        3        0       Exact    36       2.00     1.00      3         2.00    Permanent
+ANT          5      6        10       1       Close    22       4.50     10.00     1         4.50    Permanent
+LEC          6      18       4        12      Poor     12       7.00     4.00      4         7.00    Permanent
+HAM          7      19       7        12      Poor     5        9.00     9.00      4         9.00    Permanent
+SAI          8      10       5        2       Good     1        14.00    5.00      6         14.00   Permanent
+ALO          9      17       8        8       Poor     6        12.00    7.00      5         12.00   Permanent
+TSU          10     16       12       6       Poor     0        12.00    19.00     3         12.00   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.61
+  Average predicted position (top 10): 4.74
+
+Ranking Accuracy:
+  Exact matches: 4/10 (40.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 6/10 (60.0%)
+  Within 3 positions: 6/10 (60.0%)
+
+======================================================================
+Race 4/25: Japanese Grand Prix (2025, Round 3)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+VER          1      1        3        0       Exact    48       2.67     1.00      3         2.67    Permanent
+NOR          2      2        6        0       Exact    58       2.00     5.67      1         2.00    Permanent
+PIA          3      3        6        0       Exact    39       4.67     5.50      1         4.67    Permanent
+RUS          4      5        5        1       Close    55       2.33     7.33      2         2.33    Permanent
+ANT          5      6        9        1       Close    30       5.00     10.00     2         5.00    Permanent
+LEC          6      4        4        2       Good     12       10.67    3.67      5         10.67   Permanent
+SAI          7      14       5        7       Poor     2        12.67    9.33      4         12.67   Permanent
+HAM          8      7        7        1       Close    5        12.33    6.33      5         12.33   Permanent
+ALO          9      11       8        2       Good     6        13.67    7.00      6         13.67   Permanent
+ALB          10     9        13       1       Close    16       8.67     18.67     4         8.67    Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.61
+  Average predicted position (top 10): 5.06
+
+Ranking Accuracy:
+  Exact matches: 3/10 (30.0%)
+  Within 1 position: 7/10 (70.0%)
+  Within 2 positions: 9/10 (90.0%)
+  Within 3 positions: 9/10 (90.0%)
+
+======================================================================
+Race 5/25: Bahrain Grand Prix (2025, Round 4)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    54       4.25     14.00     1         4.25    Permanent
+RUS          2      2        5        0       Exact    65       3.00     5.33      2         3.00    Permanent
+NOR          3      3        6        0       Exact    76       2.00     12.67     1         2.00    Permanent
+VER          4      6        3        2       Good     73       2.25     7.00      3         2.25    Permanent
+ANT          5      11       8        6       Poor     38       5.25     10.00     2         5.25    Permanent
+LEC          6      4        4        2       Good     24       9.00     8.00      4         9.00    Permanent
+HAM          7      5        7        2       Good     11       11.00    5.00      4         11.00   Permanent
+SAI          8      19       5        11      Poor     2        13.00    3.00      5         13.00   Permanent
+ALB          9      12       13       3       Fair     18       8.75     12.67     5         8.75    Permanent
+ALO          10     15       8        5       Poor     6        13.00    7.00      7         13.00   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.58
+  Average predicted position (top 10): 4.85
+
+Ranking Accuracy:
+  Exact matches: 3/10 (30.0%)
+  Within 1 position: 3/10 (30.0%)
+  Within 2 positions: 6/10 (60.0%)
+  Within 3 positions: 7/10 (70.0%)
+
+======================================================================
+Race 6/25: Saudi Arabian Grand Prix (2025, Round 5)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    79       3.60     9.50      1         3.60    Street
+VER          2      2        3        0       Exact    81       3.00     1.33      3         3.00    Street
+NOR          3      4        6        1       Close    91       2.20     10.67     1         2.20    Street
+RUS          4      5        5        1       Close    83       2.80     5.00      2         2.80    Street
+ANT          5      6        7        1       Close    38       6.40     10.00     2         6.40    Street
+LEC          6      3        4        3       Fair     36       8.00     4.00      4         8.00    Street
+HAM          7      7        7        0       Exact    21       9.80     8.00      4         9.80    Street
+SAI          8      8        5        0       Exact    2        14.20    4.50      6         14.20   Street
+ALO          9      11       8        2       Good     6        13.40    8.00      7         13.40   Street
+OCO          10     14       12       4       Poor     14       12.40    9.00      5         12.40   Street
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.77
+  Average predicted position (top 10): 5.36
+
+Ranking Accuracy:
+  Exact matches: 4/10 (40.0%)
+  Within 1 position: 7/10 (70.0%)
+  Within 2 positions: 8/10 (80.0%)
+  Within 3 positions: 9/10 (90.0%)
+
+======================================================================
+Race 7/25: Miami Grand Prix (2025, Round 6)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    104      3.17     16.00     1         3.00    Street
+NOR          2      2        6        0       Exact    103      2.50     12.33     1         2.40    Street
+RUS          3      3        5        0       Exact    93       3.17     5.67      2         3.60    Street
+VER          4      4        3        0       Exact    99       2.83     1.33      3         3.00    Street
+ANT          5      6        7        1       Close    46       6.33     10.00     2         6.60    Street
+LEC          6      7        4        1       Close    51       7.17     4.00      4         7.40    Street
+HAM          7      8        7        1       Close    27       9.33     6.00      4         9.60    Street
+SAI          8      9        5        1       Close    6        13.17    4.33      5         13.80   Street
+ALB          9      5        13       4       Poor     20       9.33     13.67     5         8.40    Street
+TSU          10     10       12       0       Exact    2        13.33    10.00     3         13.60   Street
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 2.90
+  Worst in top 10: Position 7.74
+  Average predicted position (top 10): 5.20
+
+Ranking Accuracy:
+  Exact matches: 5/10 (50.0%)
+  Within 1 position: 9/10 (90.0%)
+  Within 2 positions: 9/10 (90.0%)
+  Within 3 positions: 9/10 (90.0%)
+
+======================================================================
+Race 8/25: Emilia Romagna Grand Prix (2025, Round 7)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+VER          1      1        3        0       Exact    111      3.00     1.00      3         3.40    Permanent
+NOR          2      2        6        0       Exact    121      2.43     2.50      1         2.60    Permanent
+PIA          3      3        6        0       Exact    129      2.86     4.00      1         1.40    Permanent
+LEC          4      6        4        2       Good     57       7.14     4.50      4         7.20    Permanent
+RUS          5      7        5        2       Good     108      3.14     5.50      2         3.60    Permanent
+ANT          6      19       6        13      Poor     54       6.29     10.00     2         7.00    Permanent
+HAM          7      4        7        3       Fair     31       9.14     9.50      4         9.20    Permanent
+SAI          8      8        5        0       Exact    8        12.57    12.50     5         12.00   Permanent
+TSU          9      10       12       1       Close    3        12.86    8.50      3         13.20   Permanent
+ALB          10     5        13       5       Poor     30       8.71     15.50     5         8.40    Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.62
+  Average predicted position (top 10): 4.87
+
+Ranking Accuracy:
+  Exact matches: 4/10 (40.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 7/10 (70.0%)
+  Within 3 positions: 8/10 (80.0%)
+
+======================================================================
+Race 9/25: Monaco Grand Prix (2025, Round 8)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        6        0       Exact    139      2.38     6.33      1         2.60    Street
+PIA          2      3        6        1       Close    144      2.88     6.00      1         1.80    Street
+VER          3      4        3        1       Close    136      2.75     3.33      3         2.80    Street
+RUS          4      11       5        7       Poor     114      3.62     5.00      2         4.40    Street
+LEC          5      2        5        3       Fair     65       7.00     3.67      4         4.80    Street
+ANT          6      18       7        12      Poor     54       7.88     10.00     2         9.60    Street
+HAM          7      5        7        2       Good     43       8.50     6.33      4         6.20    Street
+SAI          8      10       5        2       Good     12       12.00    4.33      5         11.60   Street
+ALB          9      9        13       0       Exact    40       8.25     13.67     5         8.00    Street
+ALO          10     19       8        9       Poor     6        13.00    6.67      7         12.60   Street
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.61
+  Average predicted position (top 10): 5.12
+
+Ranking Accuracy:
+  Exact matches: 2/10 (20.0%)
+  Within 1 position: 4/10 (40.0%)
+  Within 2 positions: 6/10 (60.0%)
+  Within 3 positions: 7/10 (70.0%)
+
+======================================================================
+Race 10/25: Spanish Grand Prix (2025, Round 9)
+======================================================================
+  Found 19 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    159      2.89     10.00     1         1.80    Permanent
+NOR          2      2        5        0       Exact    164      2.22     9.00      1         2.40    Permanent
+LEC          3      3        4        0       Exact    83       6.44     12.00     4         4.40    Permanent
+RUS          4      4        5        0       Exact    114      4.44     3.33      2         5.60    Permanent
+HAM          5      6        7        1       Close    53       8.11     3.33      4         5.80    Permanent
+VER          6      10       3        4       Poor     148      2.89     1.00      3         3.40    Permanent
+SAI          7      14       5        7       Poor     13       11.78    5.00      5         10.80   Permanent
+ANT          8      18       8        10      Poor     54       9.00     10.00     2         12.00   Permanent
+ALB          9      19       12       10      Poor     42       8.33     17.33     5         8.00    Permanent
+TSU          10     13       12       3       Fair     4        13.00    13.67     3         13.00   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.87
+  Average predicted position (top 10): 4.91
+
+Ranking Accuracy:
+  Exact matches: 4/10 (40.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 5/10 (50.0%)
+  Within 3 positions: 6/10 (60.0%)
+
+======================================================================
+Race 11/25: Canadian Grand Prix (2025, Round 10)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+RUS          1      1        5        0       Exact    126      4.40     8.67      2         6.00    Permanent
+VER          2      2        3        0       Exact    149      3.60     1.00      4         4.20    Permanent
+PIA          3      4        6        1       Close    184      2.70     8.00      1         1.80    Permanent
+LEC          4      5        5        1       Close    98       6.10     9.33      3         4.20    Permanent
+HAM          5      6        7        1       Close    61       7.90     3.33      3         6.00    Permanent
+NOR          6      18       5        12      Poor     182      2.20     10.00     1         2.20    Permanent
+SAI          7      10       6        3       Fair     13       12.00    7.67      5         9.80    Permanent
+ANT          8      3        8        5       Poor     54       9.90     10.00     2         13.40   Permanent
+ALB          9      20       12       11      Poor     42       9.40     12.33     5         9.40    Permanent
+ALO          10     7        8        3       Fair     8        13.20    5.67      8         13.00   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.79
+  Average predicted position (top 10): 4.94
+
+Ranking Accuracy:
+  Exact matches: 2/10 (20.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 5/10 (50.0%)
+  Within 3 positions: 7/10 (70.0%)
+
+======================================================================
+Race 12/25: Austrian Grand Prix (2025, Round 11)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        5        0       Exact    182      3.64     10.33     1         5.00    Permanent
+PIA          2      2        6        0       Exact    196      2.82     9.00      1         2.40    Permanent
+LEC          3      3        5        0       Exact    108      6.00     4.67      3         4.60    Permanent
+HAM          4      4        7        0       Exact    69       7.73     5.00      3         5.80    Permanent
+RUS          5      5        5        0       Exact    151      4.09     4.00      2         5.20    Permanent
+VER          6      18       3        12      Poor     167      3.45     2.67      4         4.20    Permanent
+ANT          7      19       7        12      Poor     69       9.27     10.00     2         12.80   Permanent
+SAI          8      20       6        12      Poor     14       11.82    9.00      5         10.20   Permanent
+TSU          9      16       12       7       Poor     4        12.91    16.33     4         12.40   Permanent
+ALO          10     7        8        3       Fair     14       12.64    11.00     8         12.20   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.87
+  Average predicted position (top 10): 4.96
+
+Ranking Accuracy:
+  Exact matches: 5/10 (50.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 5/10 (50.0%)
+  Within 3 positions: 6/10 (60.0%)
+
+======================================================================
+Race 13/25: British Grand Prix (2025, Round 12)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        5        0       Exact    207      3.42     3.67      1         4.80    Permanent
+PIA          2      2        6        0       Exact    214      2.75     4.00      1         2.60    Permanent
+HAM          3      4        7        1       Close    81       7.42     2.33      3         5.00    Permanent
+VER          4      5        3        1       Close    167      4.67     3.33      4         7.00    Permanent
+LEC          5      14       5        9       Poor     123      5.75     9.00      3         3.80    Permanent
+RUS          6      10       5        4       Poor     161      4.17     14.00     2         5.60    Permanent
+SAI          7      12       6        5       Poor     14       12.50    5.33      5         12.40   Permanent
+ANT          8      16       7        8       Poor     69       10.08    10.00     2         15.40   Permanent
+ALO          9      9        8        0       Exact    20       12.17    6.67      8         10.60   Permanent
+TSU          10     15       12       5       Poor     4        13.17    13.33     4         13.60   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.88
+  Average predicted position (top 10): 4.97
+
+Ranking Accuracy:
+  Exact matches: 3/10 (30.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 5/10 (50.0%)
+  Within 3 positions: 5/10 (50.0%)
+
+======================================================================
+Race 14/25: Belgian Grand Prix (2025, Round 13)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    232      2.69     11.00     1         2.40    Permanent
+NOR          2      2        5        0       Exact    232      3.23     8.00      1         4.60    Permanent
+LEC          3      3        5        0       Exact    123      6.38     4.00      3         5.40    Permanent
+VER          4      4        3        0       Exact    177      4.69     2.00      4         7.80    Permanent
+RUS          5      5        5        0       Exact    162      4.62     10.00     2         6.20    Permanent
+HAM          6      7        7        1       Close    93       7.15     8.33      3         5.00    Permanent
+ANT          7      16       8        9       Poor     69       10.54    10.00     2         14.80   Permanent
+SAI          8      18       6        10      Poor     14       12.46    9.33      5         13.20   Permanent
+ALO          9      17       8        8       Poor     22       11.92    6.00      7         10.20   Permanent
+HUL          10     12       12       2       Good     37       12.31    18.00     6         8.20    Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.67
+  Average predicted position (top 10): 4.92
+
+Ranking Accuracy:
+  Exact matches: 5/10 (50.0%)
+  Within 1 position: 6/10 (60.0%)
+  Within 2 positions: 7/10 (70.0%)
+  Within 3 positions: 7/10 (70.0%)
+
+======================================================================
+Race 15/25: Hungarian Grand Prix (2025, Round 14)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        5        0       Exact    250      3.14     3.67      1         4.80    Permanent
+PIA          2      2        6        0       Exact    257      2.57     3.00      1         2.00    Permanent
+RUS          3      3        5        0       Exact    172      4.64     5.67      2         5.00    Permanent
+LEC          4      4        5        0       Exact    138      6.14     5.67      3         5.60    Permanent
+HAM          5      12       7        7       Poor     99       7.14     3.00      3         5.40    Permanent
+VER          6      9        3        3       Fair     189      4.64     2.33      4         7.80    Permanent
+ANT          7      10       8        3       Fair     69       10.93    10.00     2         14.40   Permanent
+SAI          8      14       6        6       Poor     14       12.86    6.00      5         14.80   Permanent
+ALO          9      5        9        4       Poor     22       12.29    9.33      7         9.80    Permanent
+ALB          10     15       12       5       Poor     54       10.36    14.00     5         14.00   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.80
+  Average predicted position (top 10): 5.03
+
+Ranking Accuracy:
+  Exact matches: 4/10 (40.0%)
+  Within 1 position: 4/10 (40.0%)
+  Within 2 positions: 4/10 (40.0%)
+  Within 3 positions: 6/10 (60.0%)
+
+======================================================================
+Race 16/25: Dutch Grand Prix (2025, Round 15)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      1        6        0       Exact    275      2.53     6.50      1         2.20    Permanent
+VER          2      2        3        0       Exact    191      4.93     1.33      4         7.60    Permanent
+RUS          3      4        5        1       Close    187      4.53     8.67      2         4.80    Permanent
+NOR          4      18       5        14      Poor     275      3.00     5.00      1         4.60    Permanent
+LEC          5      19       4        14      Poor     150      6.00     8.33      3         5.80    Permanent
+HAM          6      20       7        14      Poor     99       7.47     6.00      3         6.60    Permanent
+ANT          7      16       9        9       Poor     70       10.87    10.00     2         12.80   Permanent
+ALO          8      8        8        0       Exact    32       11.80    6.00      6         9.00    Permanent
+SAI          9      13       6        4       Poor     14       12.93    6.00      5         14.80   Permanent
+TSU          10     9        12       1       Close    4        13.53    17.33     4         14.60   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.84
+  Average predicted position (top 10): 4.92
+
+Ranking Accuracy:
+  Exact matches: 3/10 (30.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 5/10 (50.0%)
+  Within 3 positions: 5/10 (50.0%)
+
+======================================================================
+Race 17/25: Italian Grand Prix (2025, Round 16)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+VER          1      1        3        0       Exact    209      4.75     2.67      4         7.60    Permanent
+NOR          2      2        5        0       Exact    275      3.94     6.00      1         4.60    Permanent
+PIA          3      3        6        0       Exact    300      2.44     7.00      1         1.60    Permanent
+LEC          4      4        4        0       Exact    150      6.81     2.33      3         8.60    Permanent
+RUS          5      5        5        0       Exact    199      4.50     5.00      2         5.40    Permanent
+HAM          6      6        7        0       Exact    99       8.25     5.33      3         9.40    Permanent
+SAI          7      11       6        4       Poor     14       12.94    3.67      5         15.40   Permanent
+ANT          8      9        9        1       Close    70       11.19    10.00     2         15.40   Permanent
+ALO          9      19       9        10      Poor     36       11.56    13.00     6         9.20    Permanent
+ALB          10     7        12       3       Fair     64       10.31    8.00      5         10.20   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.51
+  Average predicted position (top 10): 5.10
+
+Ranking Accuracy:
+  Exact matches: 6/10 (60.0%)
+  Within 1 position: 7/10 (70.0%)
+  Within 2 positions: 7/10 (70.0%)
+  Within 3 positions: 8/10 (80.0%)
+
+======================================================================
+Race 18/25: Azerbaijan Grand Prix (2025, Round 17)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+PIA          1      20       5        19      Poor     315      2.47     6.00      1         1.80    Street
+NOR          2      7        5        5       Poor     293      3.82     7.33      1         4.80    Street
+VER          3      1        3        2       Good     234      4.53     2.67      4         4.20    Street
+RUS          4      2        5        2       Good     209      4.53     4.67      2         5.40    Street
+LEC          5      9        4        4       Poor     162      6.65     8.00      3         8.80    Street
+HAM          6      8        7        2       Good     107      8.12     6.33      3         9.80    Street
+ANT          7      4        9        3       Fair     72       11.06    10.00     2         13.40   Street
+ALB          8      13       12       5       Poor     70       10.12    10.33     5         8.20    Street
+ALO          9      15       8        6       Poor     36       12.00    5.67      6         11.60   Street
+SAI          10     3        6        7       Poor     14       12.82    14.33     5         13.60   Street
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.91
+  Worst in top 10: Position 7.61
+  Average predicted position (top 10): 5.65
+
+Ranking Accuracy:
+  Exact matches: 0/10 (0.0%)
+  Within 1 position: 0/10 (0.0%)
+  Within 2 positions: 3/10 (30.0%)
+  Within 3 positions: 4/10 (40.0%)
+
+======================================================================
+Race 19/25: Singapore Grand Prix (2025, Round 18)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+RUS          1      1        5        0       Exact    227      4.39     11.33     2         3.80    Street
+VER          2      2        3        0       Exact    259      4.33     4.67      4         3.40    Street
+PIA          3      4        6        1       Close    315      3.44     5.00      1         5.40    Street
+NOR          4      3        5        1       Close    299      4.00     2.33      1         6.00    Street
+LEC          5      6        5        1       Close    164      6.78     3.67      3         7.80    Street
+HAM          6      8        7        2       Good     111      8.11     6.00      3         10.60   Street
+SAI          7      10       6        3       Fair     29       12.28    3.67      5         11.80   Street
+ANT          8      5        8        3       Fair     84       10.67    10.00     2         11.00   Street
+ALB          9      14       12       5       Poor     70       10.28    16.00     5         9.20    Street
+ALO          10     7        9        3       Fair     36       12.17    13.67     7         12.80   Street
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.19
+  Worst in top 10: Position 8.04
+  Average predicted position (top 10): 5.72
+
+Ranking Accuracy:
+  Exact matches: 2/10 (20.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 6/10 (60.0%)
+  Within 3 positions: 9/10 (90.0%)
+
+======================================================================
+Race 20/25: United States Grand Prix (2025, Round 19)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+VER          1      1        3        0       Exact    277      4.21     1.67      3         3.00    Permanent
+NOR          2      2        5        0       Exact    314      3.95     4.00      1         6.20    Permanent
+RUS          3      6        5        3       Fair     252      4.21     5.33      2         3.00    Permanent
+PIA          4      5        5        1       Close    327      3.47     11.00     1         6.00    Permanent
+LEC          5      3        5        2       Good     172      6.74     8.00      4         8.40    Permanent
+HAM          6      4        7        2       Good     115      8.11     13.67     4         10.80   Permanent
+ANT          7      13       8        6       Poor     94       10.37    10.00     2         8.80    Permanent
+SAI          8      20       6        12      Poor     30       12.16    8.33      5         10.20   Permanent
+ALO          9      10       9        1       Close    42       11.89    12.00     6         10.80   Permanent
+TSU          10     7        12       3       Fair     14       12.79    10.67     3         11.40   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.66
+  Average predicted position (top 10): 5.15
+
+Ranking Accuracy:
+  Exact matches: 2/10 (20.0%)
+  Within 1 position: 4/10 (40.0%)
+  Within 2 positions: 6/10 (60.0%)
+  Within 3 positions: 8/10 (80.0%)
+
+======================================================================
+Race 21/25: Mexico City Grand Prix (2025, Round 20)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        5        0       Exact    332      3.85     5.33      1         6.40    Permanent
+VER          2      3        3        1       Close    302      4.05     2.67      3         1.40    Permanent
+RUS          3      7        5        4       Poor     260      4.30     5.00      2         3.60    Permanent
+LEC          4      2        5        2       Good     187      6.55     4.00      4         8.20    Permanent
+PIA          5      5        5        0       Exact    337      3.55     8.00      1         6.60    Permanent
+HAM          6      8        7        2       Good     127      7.90     2.67      4         9.20    Permanent
+ANT          7      6        8        1       Close    94       10.50    10.00     2         9.40    Permanent
+SAI          8      17       6        9       Poor     30       12.55    3.33      5         11.40   Permanent
+ALO          9      18       9        9       Poor     43       11.80    18.33     6         11.80   Permanent
+TSU          10     11       12       1       Close    20       12.50    17.33     3         9.40    Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.71
+  Average predicted position (top 10): 4.98
+
+Ranking Accuracy:
+  Exact matches: 2/10 (20.0%)
+  Within 1 position: 5/10 (50.0%)
+  Within 2 positions: 7/10 (70.0%)
+  Within 3 positions: 7/10 (70.0%)
+
+======================================================================
+Race 22/25: São Paulo Grand Prix (2025, Round 21)
+======================================================================
+  Found 20 drivers
+
+======================================================================
+RANKING ACCURACY ANALYSIS
+======================================================================
+Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)
+
+Driver       Pred   Actual   GridPos  Error   Status   SeasPts  SeasAvg  TrackAvg  ConstrSt  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+NOR          1      1        5        0       Exact    357      3.71     8.67      1         3.00    Permanent
+VER          2      3        3        1       Close    317      4.00     2.67      3         1.60    Permanent
+RUS          3      4        5        1       Close    266      4.43     6.67      2         4.20    Permanent
+LEC          4      19       4        15      Poor     205      6.33     9.67      4         4.80    Permanent
+HAM          5      18       7        13      Poor     131      7.90     6.67      4         6.80    Permanent
+PIA          6      5        5        1       Close    347      3.62     11.00     1         7.40    Permanent
+ANT          7      2        8        5       Poor     102      10.29    10.00     2         7.40    Permanent
+SAI          8      13       6        5       Poor     30       12.76    8.33      5         12.20   Permanent
+TSU          9      17       12       8       Poor     20       12.43    11.00     3         9.80    Permanent
+ALO          10     14       9        4       Poor     43       12.10    7.33      6         13.80   Permanent
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.58
+  Average predicted position (top 10): 4.92
+
+Ranking Accuracy:
+  Exact matches: 1/10 (10.0%)
+  Within 1 position: 4/10 (40.0%)
+  Within 2 positions: 4/10 (40.0%)
+  Within 3 positions: 4/10 (40.0%)
+
+======================================================================
+Race 23/25: Las Vegas Grand Prix (2025, Round 22) [FUTURE]
+======================================================================
+  Found 20 drivers
+
+PREDICTED TOP 10 FINISHERS
+------------------------------------------------------------------------------------------------------------------------
+Rank   Driver       Pred   SeasPts  SeasAvg  TrackAvg  ConstrSt  GridPos  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+1      NOR          2.48   382      3.59     13.00     1         8        2.80    Street
+2      VER          3.98   332      3.95     3.00      3         3        2.00    Street
+3      PIA          4.41   357      3.68     8.50      1         9        7.80    Street
+4      RUS          4.60   278      4.41     4.50      2         6        4.00    Street
+5      LEC          5.21   205      6.91     3.00      4         5        7.80    Street
+6      ANT          5.25   120      9.91     10.00     2         8        6.00    Street
+7      HAM          5.54   131      8.36     4.50      4         6        9.20    Street
+8      SAI          6.37   30       12.77    4.50      5         4        12.60   Street
+9      ALO          7.69   43       12.18    10.00     6         9        12.80   Street
+10     TSU          7.82   20       12.64    13.50     3         13       10.60   Street
+
+Summary:
+  Best predicted: Position 2.48
+  Worst in top 10: Position 7.82
+  Average predicted position (top 10): 5.33
+
+======================================================================
+Race 24/25: Qatar Grand Prix (2025, Round 23) [FUTURE]
+======================================================================
+  Found 20 drivers
+
+PREDICTED TOP 10 FINISHERS
+------------------------------------------------------------------------------------------------------------------------
+Rank   Driver       Pred   SeasPts  SeasAvg  TrackAvg  ConstrSt  GridPos  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+1      RUS          3.73   288      4.47     4.00      2         6        4.20    Permanent
+2      VER          3.73   344      3.96     1.00      3         3        2.40    Permanent
+3      LEC          3.73   215      6.72     3.50      4         5        7.24    Permanent
+4      NOR          3.74   400      3.43     6.50      1         8        2.64    Permanent
+5      PIA          3.97   369      3.71     2.50      1         9        7.04    Permanent
+6      ANT          4.11   130      9.42     10.00     2         8        5.80    Permanent
+7      HAM          5.20   139      8.13     15.50     4         6        8.56    Permanent
+8      SAI          5.68   38       12.10    13.00     5         4        11.28   Permanent
+9      ALO          6.84   47       11.76    6.50      6         9        11.84   Permanent
+10     ALB          7.81   74       10.45    14.00     5         14       11.84   Permanent
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.81
+  Average predicted position (top 10): 4.85
+
+======================================================================
+Race 25/25: Abu Dhabi Grand Prix (2025, Round 24) [FUTURE]
+======================================================================
+  Found 20 drivers
+
+PREDICTED TOP 10 FINISHERS
+------------------------------------------------------------------------------------------------------------------------
+Rank   Driver       Pred   SeasPts  SeasAvg  TrackAvg  ConstrSt  GridPos  Form    TrackType
+------------------------------------------------------------------------------------------------------------------------
+1      NOR          3.73   412      3.49     4.00      1         8        2.91    Permanent
+2      VER          3.73   356      3.96     2.67      3         3        2.72    Permanent
+3      RUS          3.73   300      4.42     4.33      2         6        4.16    Permanent
+4      LEC          3.73   227      6.45     2.33      4         5        6.59    Permanent
+5      ANT          3.92   142      8.88     10.00     2         8        5.44    Permanent
+6      PIA          4.50   381      3.74     8.00      1         9        6.43    Permanent
+7      HAM          4.92   149      7.81     10.33     4         6        7.85    Permanent
+8      SAI          5.41   46       11.49    8.00      5         4        10.22   Permanent
+9      TSU          7.34   28       11.76    10.33     3         13       9.66    Permanent
+10     ALO          7.46   53       11.29    12.00     6         9        10.87   Permanent
+
+Summary:
+  Best predicted: Position 3.73
+  Worst in top 10: Position 7.46
+  Average predicted position (top 10): 4.85
+
+======================================================================
+All predictions saved to predictions.csv
+Total races predicted: 25
+======================================================================

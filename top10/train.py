@@ -19,12 +19,12 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
 import sys
 
-# Import from parent train.py (explicitly reference parent directory)
+# Import from top20/train.py (has updated prepare_features_and_labels with filtering params)
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 # Import with explicit module name to avoid circular import
 import importlib.util
-spec = importlib.util.spec_from_file_location("train_module", parent_dir / "train.py")
+spec = importlib.util.spec_from_file_location("train_module", parent_dir / "top20" / "train.py")
 train_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(train_module)
 
@@ -39,45 +39,6 @@ get_feature_importance = train_module.get_feature_importance
 train_model = train_module.train_model
 plot_training_history = train_module.plot_training_history
 import pickle
-
-
-def add_winner_features(df):
-    """Add features that specifically help identify winners."""
-    df = df.copy()
-    
-    # Feature 1: Is pole position (GridPosition == 1)
-    df['IsPolePosition'] = (df['GridPosition'].fillna(10.0) == 1).astype(float)
-    
-    # Feature 2: Recent wins (count wins in last 5 races)
-    # We'll approximate this using RecentForm - if RecentForm is very good, likely has recent wins
-    df['RecentWinsApprox'] = ((df['RecentForm'].fillna(10.0) <= 2.0) & (df['RecentForm'].fillna(10.0) > 0)).astype(float)
-    
-    # Feature 3: Championship leader (SeasonPoints is highest)
-    # We'll calculate this per race
-    df['IsChampionshipLeader'] = 0.0
-    for (year, event), group in df.groupby(['Year', 'EventName']):
-        if 'SeasonPoints' in group.columns:
-            max_points = group['SeasonPoints'].max()
-            df.loc[group.index, 'IsChampionshipLeader'] = (group['SeasonPoints'] == max_points).astype(float)
-    
-    # Feature 4: Strong grid position (top 3)
-    df['IsTop3Grid'] = (df['GridPosition'].fillna(10.0) <= 3).astype(float)
-    
-    # Feature 5: Dominant season performance (high points, low avg finish)
-    # Handle NaN values in SeasonAvgFinish
-    df['DominanceScore'] = (df['SeasonPoints'] / 100.0) * (1.0 / (df['SeasonAvgFinish'].fillna(10.0) + 1.0))
-    # Normalize to 0-1 range (handle NaN and inf)
-    df['DominanceScore'] = df['DominanceScore'].replace([np.inf, -np.inf], np.nan)
-    if df['DominanceScore'].notna().any() and df['DominanceScore'].max() > 0:
-        df['DominanceScore'] = df['DominanceScore'] / df['DominanceScore'].max()
-    df['DominanceScore'] = df['DominanceScore'].fillna(0.0)
-    
-    # Fill any remaining NaN values with 0
-    for col in ['IsPolePosition', 'RecentWinsApprox', 'IsChampionshipLeader', 'IsTop3Grid', 'DominanceScore']:
-        if col in df.columns:
-            df[col] = df[col].fillna(0.0)
-    
-    return df
 
 
 def save_model(model, scaler, label_encoder, output_dir: str = None):
@@ -128,11 +89,6 @@ def main():
     print(f"Training samples: {len(training_df)}")
     print(f"Test samples: {len(test_df)}")
     
-    # Add winner-specific features (tested: improves winner exact prediction from 0% to 22.7%)
-    print("\nAdding winner-specific features...")
-    training_df = add_winner_features(training_df)
-    test_df = add_winner_features(test_df)
-    
     # Prepare training data (filtered - no DNFs/outliers, top 10 only)
     # Test results show: Training on top 10 only improves top 10 MAE from 3.043 to 1.861
     # and "Within 3" accuracy from 55.5% to 79.1%
@@ -140,91 +96,10 @@ def main():
     X_train, y_train, _, train_stats, feature_names = prepare_features_and_labels(
         training_df, filter_dnf=True, filter_outliers=True, outlier_threshold=8, top10_only=True)
     
-    # Add winner-specific features to feature matrix
-    winner_feature_cols = ['IsPolePosition', 'RecentWinsApprox', 'IsChampionshipLeader', 
-                          'IsTop3Grid', 'DominanceScore']
-    
-    # Re-apply the same filtering to get winner features in correct order
-    # This matches the filtering done in prepare_features_and_labels
-    training_df_filtered = training_df.copy()
-    
-    # Apply top 10 filter
-    if 'ActualPosition' in training_df_filtered.columns:
-        training_df_filtered = training_df_filtered[training_df_filtered['ActualPosition'] <= 10]
-    
-    # Apply DNF filter
-    if 'IsDNF' in training_df_filtered.columns:
-        training_df_filtered = training_df_filtered[~training_df_filtered['IsDNF']]
-    elif 'Status' in training_df_filtered.columns:
-        dnf_statuses = ['DNF', 'DSQ', 'DNS', 'NC']
-        training_df_filtered = training_df_filtered[
-            ~training_df_filtered['Status'].astype(str).str.contains('|'.join(dnf_statuses), na=False)
-        ]
-    
-    # Apply outlier filter
-    if 'ActualPosition' in training_df_filtered.columns and 'GridPosition' in training_df_filtered.columns:
-        training_df_filtered = training_df_filtered[
-            ~((training_df_filtered['ActualPosition'] - training_df_filtered['GridPosition'].fillna(10)) > 8)
-        ]
-    
-    # Remove NaN in ActualPosition
-    training_df_filtered = training_df_filtered[training_df_filtered['ActualPosition'].notna()]
-    
-    # Ensure all winner feature columns exist and fill NaN
-    for col in winner_feature_cols:
-        if col not in training_df_filtered.columns:
-            training_df_filtered[col] = 0.0
-        training_df_filtered[col] = training_df_filtered[col].fillna(0.0)
-    
-    # Extract winner features (should match X_train length)
-    X_train_winner = training_df_filtered[winner_feature_cols].values
-    if len(X_train_winner) != len(X_train):
-        print(f"  Warning: Winner features length ({len(X_train_winner)}) doesn't match X_train ({len(X_train)})")
-        # If lengths don't match, pad or truncate (shouldn't happen if filtering is consistent)
-        if len(X_train_winner) > len(X_train):
-            X_train_winner = X_train_winner[:len(X_train)]
-        else:
-            padding = np.zeros((len(X_train) - len(X_train_winner), len(winner_feature_cols)))
-            X_train_winner = np.vstack([X_train_winner, padding])
-    
-    X_train = np.hstack([X_train, X_train_winner])
-    feature_names = feature_names + winner_feature_cols
-    
     # Prepare test data (filtered - for primary evaluation, top 10 only)
     print("\nPreparing test data (top 10 positions only, excluding DNFs/outliers)...")
     X_test, y_test, _, test_stats, _ = prepare_features_and_labels(
         test_df, filter_dnf=True, filter_outliers=True, outlier_threshold=8, top10_only=True)
-    
-    # Add winner-specific features to test data (apply same filtering)
-    test_df_filtered = test_df.copy()
-    if 'ActualPosition' in test_df_filtered.columns:
-        test_df_filtered = test_df_filtered[test_df_filtered['ActualPosition'] <= 10]
-    if 'IsDNF' in test_df_filtered.columns:
-        test_df_filtered = test_df_filtered[~test_df_filtered['IsDNF']]
-    elif 'Status' in test_df_filtered.columns:
-        dnf_statuses = ['DNF', 'DSQ', 'DNS', 'NC']
-        test_df_filtered = test_df_filtered[
-            ~test_df_filtered['Status'].astype(str).str.contains('|'.join(dnf_statuses), na=False)
-        ]
-    if 'ActualPosition' in test_df_filtered.columns and 'GridPosition' in test_df_filtered.columns:
-        test_df_filtered = test_df_filtered[
-            ~((test_df_filtered['ActualPosition'] - test_df_filtered['GridPosition'].fillna(10)) > 8)
-        ]
-    test_df_filtered = test_df_filtered[test_df_filtered['ActualPosition'].notna()]
-    
-    for col in winner_feature_cols:
-        if col not in test_df_filtered.columns:
-            test_df_filtered[col] = 0.0
-        test_df_filtered[col] = test_df_filtered[col].fillna(0.0)
-    
-    X_test_winner = test_df_filtered[winner_feature_cols].values
-    if len(X_test_winner) != len(X_test):
-        if len(X_test_winner) > len(X_test):
-            X_test_winner = X_test_winner[:len(X_test)]
-        else:
-            padding = np.zeros((len(X_test) - len(X_test_winner), len(winner_feature_cols)))
-            X_test_winner = np.vstack([X_test_winner, padding])
-    X_test = np.hstack([X_test, X_test_winner])
     
     # Also prepare unfiltered test data (for comparison/reference, top 10 only)
     # Note: We still exclude DNFs (NaN positions) since we can't evaluate accuracy on them
@@ -232,34 +107,6 @@ def main():
     print("\nPreparing test data (top 10 only, including outliers for reference)...")
     X_test_all, y_test_all, _, test_stats_all, _ = prepare_features_and_labels(
         test_df, filter_dnf=True, filter_outliers=False, outlier_threshold=8, top10_only=True)
-    
-    # Add winner-specific features to unfiltered test data (no outlier filter)
-    test_df_all_filtered = test_df.copy()
-    if 'ActualPosition' in test_df_all_filtered.columns:
-        test_df_all_filtered = test_df_all_filtered[test_df_all_filtered['ActualPosition'] <= 10]
-    if 'IsDNF' in test_df_all_filtered.columns:
-        test_df_all_filtered = test_df_all_filtered[~test_df_all_filtered['IsDNF']]
-    elif 'Status' in test_df_all_filtered.columns:
-        dnf_statuses = ['DNF', 'DSQ', 'DNS', 'NC']
-        test_df_all_filtered = test_df_all_filtered[
-            ~test_df_all_filtered['Status'].astype(str).str.contains('|'.join(dnf_statuses), na=False)
-        ]
-    test_df_all_filtered = test_df_all_filtered[test_df_all_filtered['ActualPosition'].notna()]
-    
-    for col in winner_feature_cols:
-        if col not in test_df_all_filtered.columns:
-            test_df_all_filtered[col] = 0.0
-        test_df_all_filtered[col] = test_df_all_filtered[col].fillna(0.0)
-    
-    X_test_all_winner = test_df_all_filtered[winner_feature_cols].values
-    if len(X_test_all) > 0:
-        if len(X_test_all_winner) != len(X_test_all):
-            if len(X_test_all_winner) > len(X_test_all):
-                X_test_all_winner = X_test_all_winner[:len(X_test_all)]
-            else:
-                padding = np.zeros((len(X_test_all) - len(X_test_all_winner), len(winner_feature_cols)))
-                X_test_all_winner = np.vstack([X_test_all_winner, padding])
-        X_test_all = np.hstack([X_test_all, X_test_all_winner])
     
     # Scale features (fit on training, transform both filtered and unfiltered test)
     scaler = StandardScaler()
@@ -279,6 +126,7 @@ def main():
     # Architecture: Slightly reduced to prevent overfitting
     # [256, 128, 64] - Architecture optimized for winner prediction (best MAE: 2.813 vs 3.009)
     # Tested in test_architectures_winner.py - this architecture showed best winner prediction performance
+    # Using 7 base features only
     hidden_sizes = [256, 128, 64]
     
     # Train model

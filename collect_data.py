@@ -326,7 +326,7 @@ def calculate_track_avg_position(driver_results: pd.DataFrame, track_name: str) 
         if len(valid_positions) > 0:
             track_avg_dict[str(driver_num)] = valid_positions.mean()
         else:
-            track_avg_dict[str(driver_num)] = np.nan
+            track_avg_dict[str(driver_num)] = 10.0  # Default for rookies
     
     return track_avg_dict
 
@@ -338,7 +338,7 @@ def is_street_circuit(track_name: str) -> int:
     """
     street_circuits = [
         'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
-        'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+        'Saudi Arabian'
     ]
     return 1 if any(street in track_name for street in street_circuits) else 0
 
@@ -707,6 +707,10 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                     valid_positions = driver_all_races['Position'].dropna()
                     if len(valid_positions) > 0:
                         hist_track_avg = valid_positions.mean()  # Overall career average from training data
+                    else:
+                        hist_track_avg = 10.0  # Default for rookies with no history
+                else:
+                    hist_track_avg = 10.0  # Default for rookies with no history
             
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch

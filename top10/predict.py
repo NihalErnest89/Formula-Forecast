@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 # Lazy import fastf1 - only import when needed for future race selection
 
-# Feature columns (7 features - ConstructorPoints removed for better accuracy)
+# Feature columns (7 base features)
 FEATURE_COLS = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
                 'ConstructorStanding', 'GridPosition', 'RecentForm', 'TrackType']
 
@@ -34,7 +34,12 @@ def get_status(error: int) -> str:
 
 
 def handle_nan_values(X: np.ndarray) -> np.ndarray:
-    """Handle NaN values in feature matrix."""
+    """
+    Handle NaN values in feature matrix.
+    For GridPosition specifically, we use per-driver historical averages,
+    so if all values are NaN, we use a reasonable default (10.5 = mid-field)
+    instead of filling with the same mean for all drivers.
+    """
     with np.errstate(all='ignore'):
         col_means = np.nanmean(X, axis=0)
         for i in range(X.shape[1]):
@@ -43,7 +48,15 @@ def handle_nan_values(X: np.ndarray) -> np.ndarray:
                 fill_val = 0 if np.isnan(median_val) else median_val
                 X[:, i] = np.nan_to_num(X[:, i], nan=fill_val)
             else:
-                X[:, i] = np.nan_to_num(X[:, i], nan=col_means[i])
+                # Check if all values in this column are NaN
+                nan_mask = np.isnan(X[:, i])
+                if nan_mask.all():
+                    # All NaN - use a reasonable default (10.5 for grid position, mid-field)
+                    # This should rarely happen if calculate_future_race_features works correctly
+                    X[:, i] = 10.5
+                else:
+                    # Some NaN - fill with mean of non-NaN values
+                    X[:, i] = np.nan_to_num(X[:, i], nan=col_means[i])
     return X
 
 
@@ -52,7 +65,11 @@ def make_predictions(X_scaled: np.ndarray, model, model_type: str, device=None) 
     if model_type == 'neural_network':
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X_scaled).to(device)
-            return model(X_tensor).cpu().numpy()
+            predictions = model(X_tensor).cpu().numpy()
+            # Ensure predictions are 1D array (flatten if needed)
+            if predictions.ndim > 1:
+                predictions = predictions.flatten()
+            return predictions
     else:
         return model.predict(X_scaled)
 
@@ -60,7 +77,7 @@ def make_predictions(X_scaled: np.ndarray, model, model_type: str, device=None) 
 class F1NeuralNetwork(nn.Module):
     """Neural Network model definition (must match training - regression)."""
     
-    def __init__(self, input_size=7, hidden_sizes=[192, 96, 48], dropout_rate=0.4):
+    def __init__(self, input_size=7, hidden_sizes=[256, 128, 64], dropout_rate=0.4):
         super(F1NeuralNetwork, self).__init__()
         
         layers = []
@@ -77,7 +94,11 @@ class F1NeuralNetwork(nn.Module):
         self.network = nn.Sequential(*layers)
     
     def forward(self, x):
-        return self.network(x).squeeze()
+        output = self.network(x)
+        # Squeeze only the last dimension (output dimension), not batch dimension
+        if output.dim() > 1:
+            return output.squeeze(-1)  # Squeeze last dimension only
+        return output.squeeze()
 
 
 def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_fallback: bool = True):
@@ -108,14 +129,14 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
             with open(nn_scaler_path, 'rb') as f:
                 scaler = pickle.load(f)
             
-            # Get input size from scaler (should be 7 - ConstructorPoints removed for better accuracy)
+            # Get input size from scaler (should be 7 base features)
             input_size = getattr(scaler, 'n_features_in_', 7)
             
             # Initialize and load model with correct input size
             device = torch.device('cpu')
             model = F1NeuralNetwork(
                 input_size=input_size,
-                hidden_sizes=[192, 96, 48],  # Updated architecture to reduce overfitting
+                hidden_sizes=[256, 128, 64],  # Architecture optimized for winner prediction
                 dropout_rate=0.4
             ).to(device)
             model.load_state_dict(torch.load(nn_model_path, map_location=device))
@@ -297,7 +318,7 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
 def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int, 
                                     track_name: str, training_df: pd.DataFrame = None):
     """
-    Calculate features for a future race using data from the most recent completed race.
+    Calculate features for a future race using data from all completed races up to this point.
     
     Args:
         test_df: DataFrame with test data (completed races)
@@ -308,20 +329,27 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
     Returns:
         DataFrame with driver features for the future race
     """
-    # Get the most recent completed race data
-    recent_races = test_df[test_df['Year'] == selected_year].copy()
-    if recent_races.empty:
-        # If no races in this year, use last year's data
-        recent_races = test_df.copy()
+    # Get all completed races up to (but not including) the future race
+    completed_races = test_df[
+        (test_df['Year'] == selected_year) & 
+        (test_df['RoundNumber'] < selected_round)
+    ].copy()
     
-    if recent_races.empty:
+    if completed_races.empty:
+        # If no races in this year yet, use last year's final data
+        last_year_races = test_df[test_df['Year'] < selected_year]
+        if not last_year_races.empty:
+            last_year = last_year_races['Year'].max()
+            completed_races = test_df[test_df['Year'] == last_year].copy()
+    
+    if completed_races.empty:
         raise ValueError("No historical data available to calculate features for future race")
     
-    # Get the most recent race (highest round number)
-    most_recent_round = recent_races['RoundNumber'].max()
-    most_recent_race = recent_races[recent_races['RoundNumber'] == most_recent_round].copy()
+    # Get the most recent completed race for driver list and initial state
+    most_recent_round = completed_races['RoundNumber'].max()
+    most_recent_race = completed_races[completed_races['RoundNumber'] == most_recent_round].copy()
     
-    print(f"  Using features from most recent race: Round {most_recent_round}")
+    print(f"  Calculating features from {len(completed_races)} completed races (most recent: Round {most_recent_round})")
     
     # For each driver in the most recent race, use their current features
     # These features represent their state up to the most recent race
@@ -361,9 +389,9 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
                 if len(valid_positions) > 0:
                     track_avg_by_driver[str(driver_num)] = valid_positions.mean()
                 else:
-                    track_avg_by_driver[str(driver_num)] = np.nan
+                    track_avg_by_driver[str(driver_num)] = 10.0  # Default for rookies
             else:
-                track_avg_by_driver[str(driver_num)] = np.nan
+                track_avg_by_driver[str(driver_num)] = 10.0  # Default for rookies
         
         # Calculate average grid position for this driver (from all historical races)
         driver_all_races = historical_df[historical_df['DriverNumber'] == driver_num]
@@ -376,13 +404,70 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
         else:
             grid_avg_by_driver[str(driver_num)] = np.nan
     
+    # F1 points system for calculating cumulative points
+    points_system = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+    
     for _, driver_row in most_recent_race.iterrows():
         driver_num = driver_row['DriverNumber']
         driver_name = driver_row.get('DriverName', f"Driver {driver_num}")
         
+        # Calculate cumulative features from ALL completed races (not just most recent)
+        driver_completed_races = completed_races[completed_races['DriverNumber'] == driver_num].copy()
+        
+        # Calculate SeasonPoints: sum of all points from completed races
+        if not driver_completed_races.empty:
+            # Prefer Points column if it exists (more accurate)
+            if 'Points' in driver_completed_races.columns:
+                season_points = driver_completed_races['Points'].sum()
+            elif 'ActualPosition' in driver_completed_races.columns:
+                # Calculate points from actual positions
+                total_points = 0
+                for _, race in driver_completed_races.iterrows():
+                    pos = race.get('ActualPosition', np.nan)
+                    if not pd.isna(pos) and 1 <= pos <= 10:
+                        total_points += points_system.get(int(pos), 0)
+                season_points = total_points
+            else:
+                # Fallback: use most recent race's cumulative points
+                season_points = driver_row.get('SeasonPoints', 0)
+        else:
+            # Fallback: use most recent race's cumulative points
+            season_points = driver_row.get('SeasonPoints', 0)
+        
+        # Calculate SeasonAvgFinish: average of all completed race positions
+        if not driver_completed_races.empty and 'ActualPosition' in driver_completed_races.columns:
+            valid_positions = driver_completed_races['ActualPosition'].dropna()
+            if len(valid_positions) > 0:
+                season_avg_finish = valid_positions.mean()
+            else:
+                season_avg_finish = driver_row.get('SeasonAvgFinish', np.nan)
+        else:
+            season_avg_finish = driver_row.get('SeasonAvgFinish', np.nan)
+        
+        # Calculate RecentForm: average of last 5 completed races
+        if not driver_completed_races.empty and 'ActualPosition' in driver_completed_races.columns:
+            # Sort by round number descending to get most recent
+            driver_races_sorted = driver_completed_races.sort_values('RoundNumber', ascending=False)
+            last_5_races = driver_races_sorted.head(5)
+            valid_positions = last_5_races['ActualPosition'].dropna()
+            if len(valid_positions) > 0:
+                recent_form = valid_positions.mean()
+            else:
+                recent_form = driver_row.get('RecentForm', np.nan)
+        else:
+            recent_form = driver_row.get('RecentForm', np.nan)
+        
+        # Calculate ConstructorPoints and ConstructorStanding from completed races
+        # Group by constructor (simplified - use most recent race's values)
+        constructor_points = driver_row.get('ConstructorPoints', 0)
+        constructor_standing = driver_row.get('ConstructorStanding', 10)
+        
         # Get track-specific historical average for this driver at this track
+        # Default to 10.0 for rookies/drivers with no historical data
         hist_track_avg = track_avg_by_driver.get(str(driver_num), 
-                                                  driver_row.get('HistoricalTrackAvgPosition', np.nan))
+                                                  driver_row.get('HistoricalTrackAvgPosition', 10.0))
+        if pd.isna(hist_track_avg):
+            hist_track_avg = 10.0
         
         # Get driver's historical average grid position (or use most recent if no history)
         driver_grid_avg = grid_avg_by_driver.get(str(driver_num), np.nan)
@@ -397,25 +482,29 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
                     if len(valid_grid) > 0:
                         driver_grid_avg = valid_grid.mean()
         
+        # Ensure we always have a valid GridPosition (default to 10.5 = mid-field if no history)
+        if pd.isna(driver_grid_avg):
+            driver_grid_avg = 10.5  # Mid-field default for drivers with no grid history
+        
         # Calculate TrackType (street circuit = 1, permanent = 0)
         street_circuits = [
             'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
-            'Saudi Arabian', 'Australian', 'Canadian', 'São Paulo'
+            'Saudi Arabian'
         ]
         track_type = 1 if any(street in track_name for street in street_circuits) else 0
         
-        # Use features from the most recent race, but update track-specific data
+        # Use calculated cumulative features
         features = {
             'Year': selected_year,
             'EventName': track_name,
             'RoundNumber': selected_round,
-            'SeasonPoints': driver_row.get('SeasonPoints', 0),
-            'SeasonAvgFinish': driver_row.get('SeasonAvgFinish', np.nan),
-            'HistoricalTrackAvgPosition': hist_track_avg,  # Track-specific average
-            'ConstructorPoints': driver_row.get('ConstructorPoints', 0),
-            'ConstructorStanding': driver_row.get('ConstructorStanding', 10),
-            'GridPosition': driver_grid_avg,  # Use driver's historical average grid position
-            'RecentForm': driver_row.get('RecentForm', np.nan),  # Recent form from most recent race
+            'SeasonPoints': season_points,  # Calculated from all completed races
+            'SeasonAvgFinish': season_avg_finish,  # Calculated from all completed races
+            'HistoricalTrackAvgPosition': hist_track_avg if not pd.isna(hist_track_avg) else 10.0,  # Track-specific average (default 10.0 for rookies)
+            'ConstructorPoints': constructor_points,
+            'ConstructorStanding': constructor_standing,
+            'GridPosition': driver_grid_avg if not pd.isna(driver_grid_avg) else 10.5,  # Use driver's historical average grid position (default 10.5 if no history)
+            'RecentForm': recent_form,  # Calculated from last 5 completed races
             'TrackType': track_type,  # Street circuit (1) or permanent (0)
             'DriverNumber': driver_num,
             'DriverName': driver_name,
@@ -447,7 +536,70 @@ def update_future_race_features_progressive(race_df: pd.DataFrame, previous_stat
             updated_df.at[idx, 'ConstructorPoints'] = prev_row.get('ConstructorPoints', row.get('ConstructorPoints', 0))
             updated_df.at[idx, 'ConstructorStanding'] = prev_row.get('ConstructorStanding', row.get('ConstructorStanding', 10))
             updated_df.at[idx, 'RecentForm'] = prev_row.get('RecentForm', row.get('RecentForm', np.nan))
+            # Preserve GridPosition from current row (it's driver-specific historical average, shouldn't change)
+            # If it's NaN in current row but exists in previous, use previous as fallback
+            if pd.isna(row.get('GridPosition', np.nan)) and not pd.isna(prev_row.get('GridPosition', np.nan)):
+                updated_df.at[idx, 'GridPosition'] = prev_row.get('GridPosition')
             # TrackType doesn't change (it's track-specific), so keep it from current row
+    
+    return updated_df
+
+
+def recalculate_features_from_state(race_df: pd.DataFrame, previous_state_df: pd.DataFrame, 
+                                    track_name: str, training_df: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    Recalculate ALL features for a future race based on the updated state from previous future race.
+    This ensures features properly reflect all previous races including simulated future ones.
+    """
+    updated_df = race_df.copy()
+    
+    # Get track-specific historical averages
+    historical_df = training_df if training_df is not None and not training_df.empty else None
+    track_avg_by_driver = {}
+    if historical_df is not None:
+        track_historical_data = historical_df[historical_df['EventName'] == track_name]
+        for driver_num in track_historical_data['DriverNumber'].unique():
+            driver_track_races = track_historical_data[track_historical_data['DriverNumber'] == driver_num]
+            if 'ActualPosition' in driver_track_races.columns:
+                valid_positions = driver_track_races['ActualPosition'].dropna()
+                if len(valid_positions) > 0:
+                    track_avg_by_driver[str(driver_num)] = valid_positions.mean()
+    
+    # Calculate TrackType
+    street_circuits = [
+        'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
+        'Saudi Arabian'
+    ]
+    track_type = 1 if any(street in track_name for street in street_circuits) else 0
+    
+    # Update features from previous state for each driver
+    for idx, row in updated_df.iterrows():
+        driver_num = row['DriverNumber']
+        prev_driver_data = previous_state_df[previous_state_df['DriverNumber'] == driver_num]
+        
+        if not prev_driver_data.empty:
+            prev_row = prev_driver_data.iloc[0]
+            # Update all features from previous state
+            updated_df.at[idx, 'SeasonPoints'] = prev_row.get('SeasonPoints', row.get('SeasonPoints', 0))
+            updated_df.at[idx, 'SeasonAvgFinish'] = prev_row.get('SeasonAvgFinish', row.get('SeasonAvgFinish', np.nan))
+            updated_df.at[idx, 'ConstructorPoints'] = prev_row.get('ConstructorPoints', row.get('ConstructorPoints', 0))
+            updated_df.at[idx, 'ConstructorStanding'] = prev_row.get('ConstructorStanding', row.get('ConstructorStanding', 10))
+            updated_df.at[idx, 'RecentForm'] = prev_row.get('RecentForm', row.get('RecentForm', np.nan))
+            
+            # GridPosition should be preserved (driver-specific historical average)
+            if pd.isna(row.get('GridPosition', np.nan)) and not pd.isna(prev_row.get('GridPosition', np.nan)):
+                updated_df.at[idx, 'GridPosition'] = prev_row.get('GridPosition')
+            elif pd.isna(row.get('GridPosition', np.nan)):
+                updated_df.at[idx, 'GridPosition'] = 10.5  # Default if still missing
+            
+            # HistoricalTrackAvgPosition - use track-specific if available
+            hist_track_avg = track_avg_by_driver.get(str(driver_num), prev_row.get('HistoricalTrackAvgPosition', 10.0))
+            if pd.isna(hist_track_avg):
+                hist_track_avg = 10.0
+            updated_df.at[idx, 'HistoricalTrackAvgPosition'] = hist_track_avg
+            
+            # TrackType is track-specific, set it
+            updated_df.at[idx, 'TrackType'] = track_type
     
     return updated_df
 
@@ -899,14 +1051,18 @@ def main():
                     # For future races, progressively update features based on previous race
                     if is_future:
                         if current_state_df is not None:
-                            # Recalculate features for this race using updated state from previous race
+                            # For subsequent future races, recalculate ALL features from the updated state
                             # Get track name from race_input_source or race_df
                             track_name = race_df['EventName'].iloc[0] if 'EventName' in race_df.columns else race_input_source.split('(')[0].strip()
-                            # Recalculate features with updated state
-                            race_df = update_future_race_features_progressive(
-                                race_df, current_state_df, race_input_source
+                            
+                            # Recalculate features using the updated state from previous future race
+                            # This ensures features reflect all previous races including simulated future ones
+                            race_df = recalculate_features_from_state(
+                                race_df, current_state_df, track_name, training_df_all
                             )
-                            # Also update track-specific historical average
+                        else:
+                            # First future race - just ensure track-specific averages are correct
+                            track_name = race_df['EventName'].iloc[0] if 'EventName' in race_df.columns else race_input_source.split('(')[0].strip()
                             if training_df_all is not None:
                                 # Recalculate track-specific averages
                                 track_historical = training_df_all[training_df_all['EventName'] == track_name]
@@ -932,8 +1088,8 @@ def main():
                             print(f"{'='*70}")
                             print(f"Comparing: Predicted Rank (1-10) vs Actual Finishing Position (1-20)")
                             print()
-                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGrid':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
-                            print("-" * 150)
+                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'GridPos':<8} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'Form':<7} {'TrackType':<9}")
+                            print("-" * 120)
                             
                             for _, row in top10.iterrows():
                                 if not pd.isna(row.get('ActualPosition')):
@@ -948,31 +1104,33 @@ def main():
                                     driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
                                     status = get_status(error)
                                     
-                                    # Get all features
+                                    # Get only features used by model (7 features)
                                     season_pts = row.get('SeasonPoints', 0)
                                     season_avg = row.get('SeasonAvgFinish', 0)
-                                    track_avg = row.get('HistoricalTrackAvgPosition', 0)
-                                    constr_pts = row.get('ConstructorPoints', 0)
+                                    track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                                    if pd.isna(track_avg):
+                                        track_avg = 10.0
                                     constr_st = row.get('ConstructorStanding', 0)
                                     recent_form = row.get('RecentForm', 0)
+                                    track_type = row.get('TrackType', 0)
                                     
                                     # Format values
                                     season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
                                     season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
-                                    track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
-                                    constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                                    track_avg_str = f"{track_avg:.2f}"  # Always show a number (default 10.0 for rookies)
                                     constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
                                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                                    track_type_str = "Street" if track_type == 1 else "Permanent"
                                     
-                                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<7} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {recent_form_str:<6}")
+                                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<8} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {recent_form_str:<7} {track_type_str:<9}")
                             
                             print("-" * 150)
                         else:
                             # Future race - show table with all features
                             print(f"\nPREDICTED TOP 10 FINISHERS")
-                            print("-" * 150)
-                            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'AvgGrid':<7} {'Form':<6}")
-                            print("-" * 150)
+                            print("-" * 120)
+                            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'GridPos':<8} {'Form':<7} {'TrackType':<9}")
+                            print("-" * 120)
                             
                             for _, row in top10.iterrows():
                                 driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
@@ -980,22 +1138,24 @@ def main():
                                 pred_pos = row['PredictedPosition']
                                 season_pts = row.get('SeasonPoints', 0)
                                 season_avg = row.get('SeasonAvgFinish', 0)
-                                track_avg = row.get('HistoricalTrackAvgPosition', 0)
-                                constr_pts = row.get('ConstructorPoints', 0)
+                                track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                                if pd.isna(track_avg):
+                                    track_avg = 10.0
                                 constr_st = row.get('ConstructorStanding', 0)
                                 grid_pos = row.get('GridPosition', 0)
                                 recent_form = row.get('RecentForm', 0)
+                                track_type = row.get('TrackType', 0)
                                 
                                 # Format values
                                 season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
                                 season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
-                                track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
-                                constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                                track_avg_str = f"{track_avg:.2f}"  # Always show a number (default 10.0 for rookies)
                                 constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
                                 grid_pos_str = f"{grid_pos:.0f}" if not pd.isna(grid_pos) else "N/A"
                                 recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                                track_type_str = "Street" if track_type == 1 else "Permanent"
                                 
-                                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.2f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {grid_pos_str:<6} {recent_form_str:<6}")
+                                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.3f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {grid_pos_str:<8} {recent_form_str:<7} {track_type_str:<9}")
                         
                         # Store predictions
                         top10_copy = top10.copy()
@@ -1078,9 +1238,9 @@ def main():
         if not is_future_race and 'ActualPosition' in all_results.columns:
             print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'AvgGrid':<10} {'Status':<10}")
         else:
-            # Future race - show all features
-            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'AvgGrid':<7} {'Form':<6}")
-        print("-" * 150 if is_future_race else "-" * 70)
+            # Future race - show only features used by model (7 features)
+            print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'GridPos':<8} {'Form':<7} {'TrackType':<9}")
+        print("-" * 120 if is_future_race else "-" * 70)
         
         for _, row in top10.iterrows():
             driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
@@ -1092,27 +1252,29 @@ def main():
             if not is_future_race and 'ActualPosition' in row and not pd.isna(row['ActualPosition']):
                 actual_pos = int(row['ActualPosition'])
                 status = get_status(abs(rank - actual_pos))
-                print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<12.2f} {actual_pos:<10} {grid_pos:<10} {status:<10}")
+                print(f"{rank:<6} {driver_name:<20} {driver_num:<10} {pred_pos:<12.3f} {actual_pos:<10} {grid_pos:<10} {status:<10}")
             else:
-                # Future race - show all features
+                # Future race - show only features used by model (7 features)
                 season_pts = row.get('SeasonPoints', 0)
                 season_avg = row.get('SeasonAvgFinish', 0)
-                track_avg = row.get('HistoricalTrackAvgPosition', 0)
-                constr_pts = row.get('ConstructorPoints', 0)
+                track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                if pd.isna(track_avg):
+                    track_avg = 10.0
                 constr_st = row.get('ConstructorStanding', 0)
                 grid_pos_val = row.get('GridPosition', 0)
                 recent_form = row.get('RecentForm', 0)
+                track_type = row.get('TrackType', 0)
                 
                 # Format values
                 season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
                 season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
-                track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
-                constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                track_avg_str = f"{track_avg:.2f}"  # Always show a number (default 10.0 for rookies)
                 constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
                 grid_pos_str = f"{grid_pos_val:.0f}" if not pd.isna(grid_pos_val) else "N/A"
                 recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                track_type_str = "Street" if track_type == 1 else "Permanent"
                 
-                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.2f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {grid_pos_str:<6} {recent_form_str:<6}")
+                print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.3f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {grid_pos_str:<8} {recent_form_str:<7} {track_type_str:<9}")
         
         # Save predictions
         output_path = Path(args.output_file)
@@ -1145,8 +1307,8 @@ def main():
             print()
             
             # Show detailed comparison table
-            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGrid':<7} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrPts':<9} {'ConstrSt':<9} {'Form':<6}")
-            print("-" * 150)
+            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'GridPos':<8} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'Form':<7} {'TrackType':<9}")
+            print("-" * 120)
             
             for _, row in top10.iterrows():
                 if not pd.isna(row.get('ActualPosition')):
@@ -1171,25 +1333,27 @@ def main():
                     if error <= 3:
                         within_3 += 1
                     
-                    # Get all features
+                    # Get only features used by model (7 features)
                     season_pts = row.get('SeasonPoints', 0)
                     season_avg = row.get('SeasonAvgFinish', 0)
-                    track_avg = row.get('HistoricalTrackAvgPosition', 0)
-                    constr_pts = row.get('ConstructorPoints', 0)
+                    track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                    if pd.isna(track_avg):
+                        track_avg = 10.0
                     constr_st = row.get('ConstructorStanding', 0)
                     recent_form = row.get('RecentForm', 0)
+                    track_type = row.get('TrackType', 0)
                     
                     # Format values
                     season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
                     season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
-                    track_avg_str = f"{track_avg:.2f}" if not pd.isna(track_avg) else "N/A"
-                    constr_pts_str = f"{constr_pts:.0f}" if not pd.isna(constr_pts) else "N/A"
+                    track_avg_str = f"{track_avg:.2f}"  # Always show a number (default 10.0 for rookies)
                     constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                    track_type_str = "Street" if track_type == 1 else "Permanent"
                     
-                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<7} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_pts_str:<9} {constr_st_str:<9} {recent_form_str:<6}")
+                    print(f"{driver_name:<12} {pred_rank:<6} {actual_pos:<8} {grid_pos:<8} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {recent_form_str:<7} {track_type_str:<9}")
             
-            print("-" * 150)
+            print("-" * 120)
             print(f"\nSummary:")
             print(f"  Exact matches (error = 0): {exact_matches}/10 ({exact_matches/10*100:.1f}%)")
             print(f"  Within 1 position: {within_1}/10 ({within_1/10*100:.1f}%)")
