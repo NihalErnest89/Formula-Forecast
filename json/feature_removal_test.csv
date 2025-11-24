@@ -1,9 +1,0 @@
-Removed Feature,Features Count,Test MAE,Test R²,Test Within 1,Test Within 2,Test Within 3
-Baseline (all 7),7,3.039,0.5264,19.8%,41.2%,60.0%
-SeasonPoints,6,3.089,0.5109,19.8%,41.2%,59.0%
-SeasonAvgFinish,6,3.095,0.5096,19.8%,38.8%,58.8%
-HistoricalTrackAvgPosition,6,3.125,0.4968,19.5%,38.0%,55.8%
-ConstructorStanding,6,3.091,0.5202,19.8%,37.0%,56.5%
-GridPosition,6,3.054,0.5211,20.5%,40.7%,57.8%
-RecentForm,6,3.077,0.5189,19.0%,40.0%,58.8%
-TrackType,6,3.033,0.5255,22.2%,41.7%,59.8%

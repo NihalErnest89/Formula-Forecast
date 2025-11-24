@@ -66,6 +66,32 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
                 results['EventName'] = event['EventName']
                 results['RoundNumber'] = event['RoundNumber']
                 
+                # Try to get sprint points if sprint race exists
+                sprint_points_dict = {}
+                try:
+                    sprint_session = fastf1.get_session(year, event['EventName'], 'Sprint')
+                    sprint_session.load(telemetry=False, weather=False, messages=False, laps=False)
+                    sprint_results = sprint_session.results
+                    if sprint_results is not None and not sprint_results.empty:
+                        # Map driver numbers to sprint points
+                        for _, sprint_row in sprint_results.iterrows():
+                            driver_num = sprint_row.get('DriverNumber')
+                            sprint_points = sprint_row.get('Points', 0)
+                            if pd.notna(sprint_points) and driver_num is not None:
+                                sprint_points_dict[str(driver_num)] = sprint_points
+                except Exception:
+                    # No sprint race for this event, or sprint data not available
+                    pass
+                
+                # Add sprint points to race points for total event points
+                if sprint_points_dict:
+                    results['SprintPoints'] = results['DriverNumber'].astype(str).map(sprint_points_dict).fillna(0)
+                    # Total points = race points + sprint points
+                    results['TotalEventPoints'] = results['Points'].fillna(0) + results['SprintPoints']
+                else:
+                    results['SprintPoints'] = 0
+                    results['TotalEventPoints'] = results['Points'].fillna(0)
+                
                 # Try to get qualifying/starting grid position
                 # Check if GridPosition column exists, if not try to get from qualifying session
                 if 'GridPosition' not in results.columns:
@@ -122,6 +148,41 @@ def calculate_season_points(driver_results: pd.DataFrame) -> Dict[str, int]:
         total_points = driver_races['Points'].sum()
         points_dict[str(driver_num)] = total_points
     return points_dict
+
+
+def calculate_season_standing(driver_results: pd.DataFrame) -> Dict[str, int]:
+    """
+    Calculate championship position for each driver based on points.
+    1 = leader (most points), higher = worse position.
+    
+    Args:
+        driver_results: DataFrame with race results
+        
+    Returns:
+        Dictionary mapping driver numbers to championship position (1-20)
+    """
+    # Calculate points per driver
+    points_dict = calculate_season_points(driver_results)
+    
+    if not points_dict:
+        return {}
+    
+    # Sort drivers by points (descending)
+    sorted_drivers = sorted(points_dict.items(), key=lambda x: x[1], reverse=True)
+    
+    # Assign positions (1 = most points)
+    standing_dict = {}
+    position = 1
+    prev_points = None
+    
+    for driver_num, points in sorted_drivers:
+        # If points are the same as previous driver, they share the position
+        if prev_points is not None and points < prev_points:
+            position = len(standing_dict) + 1
+        standing_dict[str(driver_num)] = position
+        prev_points = points
+    
+    return standing_dict
 
 
 def calculate_season_avg_finish(driver_results: pd.DataFrame) -> Dict[str, float]:
@@ -326,9 +387,72 @@ def calculate_track_avg_position(driver_results: pd.DataFrame, track_name: str) 
         if len(valid_positions) > 0:
             track_avg_dict[str(driver_num)] = valid_positions.mean()
         else:
-            track_avg_dict[str(driver_num)] = 10.0  # Default for rookies
+            track_avg_dict[str(driver_num)] = 15.0  # Default for rookies
     
     return track_avg_dict
+
+
+def calculate_constructor_track_avg(df: pd.DataFrame, constructor_standing: int, 
+                                     track_name: str, current_year: int, current_round: int) -> float:
+    """
+    Calculate constructor's average finish at this specific track.
+    Uses constructor standing as proxy for constructor identity.
+    
+    Args:
+        df: DataFrame with all race data (may not have ConstructorStanding column)
+        constructor_standing: Constructor's championship standing (1 = best, higher = worse)
+        track_name: Name of the track
+        current_year: Current race year
+        current_round: Current race round number
+        
+    Returns:
+        Average finish position for this constructor at this track (lower = better)
+    """
+    # Filter to races before current race (to avoid data leakage)
+    historical_races = df[
+        (df['EventName'] == track_name) &
+        ((df['Year'] < current_year) | ((df['Year'] == current_year) & (df['RoundNumber'] < current_round)))
+    ].copy()
+    
+    if historical_races.empty:
+        return np.nan
+    
+    # If ConstructorStanding column exists, use it directly
+    if 'ConstructorStanding' in historical_races.columns:
+        track_races = historical_races[historical_races['ConstructorStanding'] == constructor_standing]
+    else:
+        # Calculate constructor standing on the fly using TeamName and Points
+        if 'TeamName' not in historical_races.columns or 'Points' not in historical_races.columns:
+            return np.nan
+        
+        # For each year, calculate constructor standings
+        track_races = pd.DataFrame()
+        for year in historical_races['Year'].unique():
+            year_races = historical_races[historical_races['Year'] == year]
+            if year_races.empty:
+                continue
+            
+            # Calculate constructor points for this year
+            constructor_points = year_races.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
+            constructor_standings = {team: rank + 1 for rank, team in enumerate(constructor_points.index)}
+            
+            # Filter to constructors with the target standing
+            target_teams = [team for team, standing in constructor_standings.items() if standing == constructor_standing]
+            if target_teams:
+                year_track_races = year_races[year_races['TeamName'].isin(target_teams)]
+                track_races = pd.concat([track_races, year_track_races], ignore_index=True)
+    
+    if track_races.empty:
+        return np.nan
+    
+    # Use ActualPosition if available, otherwise Position
+    pos_col = 'ActualPosition' if 'ActualPosition' in track_races.columns else 'Position'
+    if pos_col in track_races.columns:
+        positions = track_races[pos_col].dropna()
+        if len(positions) > 0:
+            return positions.mean()
+    
+    return np.nan
 
 
 def is_street_circuit(track_name: str) -> int:
@@ -386,7 +510,7 @@ def calculate_form_trend(driver_results: pd.DataFrame, driver_num: str, current_
     return trend if not pd.isna(trend) else 0.0
 
 
-def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_year: int, current_round: int) -> float:
+def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_year: int, current_round: int, season_specific: bool = True) -> float:
     """
     Calculate average grid position for a driver using only data up to the current race.
     This simulates what we'd use for future race predictions.
@@ -396,16 +520,25 @@ def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_y
         driver_num: Driver number as string
         current_year: Current race year
         current_round: Current race round number
+        season_specific: If True, only use races from current season. If False, use all-time history.
         
     Returns:
         Average grid position for the driver
     """
-    # Get all races for this driver BEFORE the current race
-    driver_races = df[
-        (df['DriverNumber'] == driver_num) &
-        ((df['Year'] < current_year) | 
-         ((df['Year'] == current_year) & (df['RoundNumber'] < current_round)))
-    ]
+    if season_specific:
+        # Only use races from the current season (before current round)
+        driver_races = df[
+            (df['DriverNumber'] == driver_num) &
+            (df['Year'] == current_year) &
+            (df['RoundNumber'] < current_round)
+        ]
+    else:
+        # Use all-time history (all races before current race)
+        driver_races = df[
+            (df['DriverNumber'] == driver_num) &
+            ((df['Year'] < current_year) | 
+             ((df['Year'] == current_year) & (df['RoundNumber'] < current_round)))
+        ]
     
     if driver_races.empty:
         return np.nan
@@ -466,6 +599,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
     # Organize features and labels
     print("Organizing features and labels...")
     
+    # Dictionary to track historical sector times per (track, driver) for accumulation
     training_features = []
     test_features = []
     
@@ -492,16 +626,19 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 prev_year_data = all_training_data[all_training_data['Year'] < year]
                 if not prev_year_data.empty:
                     season_points = calculate_season_points(prev_year_data)
+                    season_standing = calculate_season_standing(prev_year_data)
                     season_avg_finish = calculate_season_avg_finish(prev_year_data)
                     constructor_points = calculate_constructor_points(prev_year_data)
                     constructor_standing = calculate_constructor_standing(prev_year_data)
                     # Get points and avg from previous season
                     driver_points = season_points.get(driver_num, 0)
+                    driver_standing = season_standing.get(driver_num, 20)  # Default to worst position if not found
                     driver_avg_finish = season_avg_finish.get(driver_num, np.nan)
                     driver_constructor_points = constructor_points.get(driver_num, 0)
                     driver_constructor_standing = constructor_standing.get(driver_num, 10)
                 else:
                     driver_points = 0
+                    driver_standing = 20  # No previous data - worst position
                     driver_avg_finish = np.nan
                     driver_constructor_points = 0
                     driver_constructor_standing = 10
@@ -510,15 +647,18 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 races_up_to_now = year_data[year_data['RoundNumber'] < round_num]
                 if not races_up_to_now.empty:
                     season_points = calculate_season_points(races_up_to_now)
+                    season_standing = calculate_season_standing(races_up_to_now)
                     season_avg_finish = calculate_season_avg_finish(races_up_to_now)
                     constructor_points = calculate_constructor_points(races_up_to_now)
                     constructor_standing = calculate_constructor_standing(races_up_to_now)
                     driver_points = season_points.get(driver_num, 0)
+                    driver_standing = season_standing.get(driver_num, 20)  # Default to worst position if not found
                     driver_avg_finish = season_avg_finish.get(driver_num, np.nan)
                     driver_constructor_points = constructor_points.get(driver_num, 0)
                     driver_constructor_standing = constructor_standing.get(driver_num, 10)
                 else:
                     driver_points = 0
+                    driver_standing = 20  # No races yet - worst position
                     driver_avg_finish = np.nan
                     driver_constructor_points = 0
                     driver_constructor_standing = 10
@@ -548,7 +688,8 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
-            grid_position = calculate_average_grid_position(all_training_data, driver_num, year, round_num)
+            # Using season-specific average (only races from current season before current round)
+            grid_position = calculate_average_grid_position(all_training_data, driver_num, year, round_num, season_specific=True)
             
             # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
@@ -597,7 +738,47 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             # 2. TrackType: 1 for street circuit, 0 for permanent
             track_type = is_street_circuit(track_name)
             
-            # 3. FormTrend: Momentum direction (improving vs declining)
+            # 3. ConstructorTrackAvg: Constructor's average finish at this specific track
+            constructor_track_avg = calculate_constructor_track_avg(
+                all_training_data, driver_constructor_standing, track_name, year, round_num
+            )
+            # Fallback: if no constructor track history, use constructor's overall average
+            if pd.isna(constructor_track_avg):
+                # Calculate constructor's overall average using TeamName if available
+                historical_races = all_training_data[
+                    ((all_training_data['Year'] < year) | 
+                     ((all_training_data['Year'] == year) & (all_training_data['RoundNumber'] < round_num)))
+                ].copy()
+                
+                if not historical_races.empty and 'TeamName' in historical_races.columns and 'Points' in historical_races.columns:
+                    # Find teams with the target constructor standing
+                    # Calculate standings for the most recent year available
+                    latest_year = historical_races['Year'].max()
+                    year_data = historical_races[historical_races['Year'] == latest_year]
+                    if not year_data.empty:
+                        constructor_points = year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
+                        constructor_standings = {team: rank + 1 for rank, team in enumerate(constructor_points.index)}
+                        target_teams = [team for team, standing in constructor_standings.items() if standing == driver_constructor_standing]
+                        
+                        if target_teams:
+                            constructor_all_races = historical_races[historical_races['TeamName'].isin(target_teams)]
+                            pos_col = 'ActualPosition' if 'ActualPosition' in constructor_all_races.columns else 'Position'
+                            if pos_col in constructor_all_races.columns:
+                                valid_positions = constructor_all_races[pos_col].dropna()
+                                if len(valid_positions) > 0:
+                                    constructor_track_avg = valid_positions.mean()
+                                else:
+                                    constructor_track_avg = 10.0
+                            else:
+                                constructor_track_avg = 10.0
+                        else:
+                            constructor_track_avg = 10.0
+                    else:
+                        constructor_track_avg = 10.0
+                else:
+                    constructor_track_avg = 10.0  # Default mid-field
+            
+            # 4. FormTrend: Momentum direction (improving vs declining)
             if round_num == 1:
                 # First race: use previous season's trend
                 prev_year_data = all_training_data[all_training_data['Year'] < year]
@@ -630,11 +811,13 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'Year': year,
                 'EventName': track_name,
                 'RoundNumber': round_num,
-                'SeasonPoints': driver_points,
+                'SeasonPoints': driver_points,  # Keep for backward compatibility
+                'SeasonStanding': driver_standing,  # Championship position (1 = leader, higher = worse)
                 'SeasonAvgFinish': driver_avg_finish,
                 'HistoricalTrackAvgPosition': hist_track_avg,
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
+                'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
                 'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
@@ -642,7 +825,11 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
+                'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
+                'Points': race.get('TotalEventPoints', race.get('Points', 0)),  # Race + Sprint points (source of truth)
+                'RacePoints': race.get('Points', 0),  # Race points only
+                'SprintPoints': race.get('SprintPoints', 0),  # Sprint points only
                 'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
                 'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''
             }
@@ -663,15 +850,18 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 last_year_data = all_training_data[all_training_data['Year'] == max(training_years)]
                 if not last_year_data.empty:
                     season_points = calculate_season_points(last_year_data)
+                    season_standing = calculate_season_standing(last_year_data)
                     season_avg_finish = calculate_season_avg_finish(last_year_data)
                     constructor_points = calculate_constructor_points(last_year_data)
                     constructor_standing = calculate_constructor_standing(last_year_data)
                     driver_points = season_points.get(driver_num, 0)
+                    driver_standing = season_standing.get(driver_num, 20)  # Default to worst position if not found
                     driver_avg_finish = season_avg_finish.get(driver_num, np.nan)
                     driver_constructor_points = constructor_points.get(driver_num, 0)
                     driver_constructor_standing = constructor_standing.get(driver_num, 10)
                 else:
                     driver_points = 0
+                    driver_standing = 20  # No previous data - worst position
                     driver_avg_finish = np.nan
                     driver_constructor_points = 0
                     driver_constructor_standing = 10
@@ -680,15 +870,18 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 races_up_to_now = test_data_sorted[test_data_sorted['RoundNumber'] < round_num]
                 if not races_up_to_now.empty:
                     season_points = calculate_season_points(races_up_to_now)
+                    season_standing = calculate_season_standing(races_up_to_now)
                     season_avg_finish = calculate_season_avg_finish(races_up_to_now)
                     constructor_points = calculate_constructor_points(races_up_to_now)
                     constructor_standing = calculate_constructor_standing(races_up_to_now)
                     driver_points = season_points.get(driver_num, 0)
+                    driver_standing = season_standing.get(driver_num, 20)  # Default to worst position if not found
                     driver_avg_finish = season_avg_finish.get(driver_num, np.nan)
                     driver_constructor_points = constructor_points.get(driver_num, 0)
                     driver_constructor_standing = constructor_standing.get(driver_num, 10)
                 else:
                     driver_points = 0
+                    driver_standing = 20  # No races yet - worst position
                     driver_avg_finish = np.nan
                     driver_constructor_points = 0
                     driver_constructor_standing = 10
@@ -708,9 +901,9 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                     if len(valid_positions) > 0:
                         hist_track_avg = valid_positions.mean()  # Overall career average from training data
                     else:
-                        hist_track_avg = 10.0  # Default for rookies with no history
+                        hist_track_avg = 15.0  # Default for rookies with no history
                 else:
-                    hist_track_avg = 10.0  # Default for rookies with no history
+                    hist_track_avg = 15.0  # Default for rookies with no history
             
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
@@ -723,7 +916,8 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 previous_test_races = test_data_sorted[test_data_sorted['RoundNumber'] < round_num]
                 combined_data = pd.concat([all_training_data, previous_test_races], ignore_index=True) if not previous_test_races.empty else all_training_data
             
-            grid_position = calculate_average_grid_position(combined_data, driver_num, test_year, round_num)
+            # Using season-specific average (only races from current season before current round)
+            grid_position = calculate_average_grid_position(combined_data, driver_num, test_year, round_num, season_specific=True)
             
             # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
@@ -772,7 +966,48 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             # 2. TrackType: 1 for street circuit, 0 for permanent
             track_type = is_street_circuit(track_name)
             
-            # 3. FormTrend: Momentum direction (improving vs declining)
+            # 3. ConstructorTrackAvg: Constructor's average finish at this specific track
+            # Use combined data (training + previous test races) for calculation
+            constructor_track_avg = calculate_constructor_track_avg(
+                combined_data, driver_constructor_standing, track_name, test_year, round_num
+            )
+            # Fallback: if no constructor track history, use constructor's overall average
+            if pd.isna(constructor_track_avg):
+                # Calculate constructor's overall average using TeamName if available
+                historical_races = combined_data[
+                    ((combined_data['Year'] < test_year) | 
+                     ((combined_data['Year'] == test_year) & (combined_data['RoundNumber'] < round_num)))
+                ].copy()
+                
+                if not historical_races.empty and 'TeamName' in historical_races.columns and 'Points' in historical_races.columns:
+                    # Find teams with the target constructor standing
+                    # Calculate standings for the most recent year available
+                    latest_year = historical_races['Year'].max()
+                    year_data = historical_races[historical_races['Year'] == latest_year]
+                    if not year_data.empty:
+                        constructor_points = year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
+                        constructor_standings = {team: rank + 1 for rank, team in enumerate(constructor_points.index)}
+                        target_teams = [team for team, standing in constructor_standings.items() if standing == driver_constructor_standing]
+                        
+                        if target_teams:
+                            constructor_all_races = historical_races[historical_races['TeamName'].isin(target_teams)]
+                            pos_col = 'ActualPosition' if 'ActualPosition' in constructor_all_races.columns else 'Position'
+                            if pos_col in constructor_all_races.columns:
+                                valid_positions = constructor_all_races[pos_col].dropna()
+                                if len(valid_positions) > 0:
+                                    constructor_track_avg = valid_positions.mean()
+                                else:
+                                    constructor_track_avg = 10.0
+                            else:
+                                constructor_track_avg = 10.0
+                        else:
+                            constructor_track_avg = 10.0
+                    else:
+                        constructor_track_avg = 10.0
+                else:
+                    constructor_track_avg = 10.0  # Default mid-field
+            
+            # 4. FormTrend: Momentum direction (improving vs declining)
             if round_num == 1:
                 # First race: use last year's trend
                 last_year_data = all_training_data[all_training_data['Year'] == max(training_years)]
@@ -804,11 +1039,13 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'Year': test_year,
                 'EventName': track_name,
                 'RoundNumber': round_num,
-                'SeasonPoints': driver_points,
+                'SeasonPoints': driver_points,  # Keep for backward compatibility
+                'SeasonStanding': driver_standing,  # Championship position (1 = leader, higher = worse)
                 'SeasonAvgFinish': driver_avg_finish,
                 'HistoricalTrackAvgPosition': hist_track_avg,
                 'ConstructorPoints': driver_constructor_points,
                 'ConstructorStanding': driver_constructor_standing,
+                'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
                 'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
@@ -816,7 +1053,11 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
                 'DriverNumber': race['DriverNumber'],
                 'DriverName': race.get('Abbreviation', 'UNK'),
+                'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
+                'Points': race.get('TotalEventPoints', race.get('Points', 0)),  # Race + Sprint points (source of truth)
+                'RacePoints': race.get('Points', 0),  # Race points only
+                'SprintPoints': race.get('SprintPoints', 0),  # Sprint points only
                 'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
                 'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''
             }
@@ -854,7 +1095,8 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
         'training_samples': len(training_df),
         'test_samples': len(test_df),
         'features': ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
-                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm'],
+                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm', 
+                     'TrackType'],
         'label': 'DriverNumber'
     }
     
