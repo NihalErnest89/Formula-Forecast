@@ -175,7 +175,7 @@ def main():
             input_size=input_size,
             hidden_sizes=[128, 64, 32],
             dropout_rate=0.4,  # Increased regularization
-            equal_init=True
+            equal_init=False  # Use He/Kaiming initialization (optimal for ReLU)
         ).to(device)
         
         # Use PositionAwareLoss from top20/train.py

@@ -64,9 +64,11 @@ class F1NeuralNetwork(nn.Module):
         
         self.network = nn.Sequential(*layers)
         
-        # Initialize weights with equal feature importance
+        # Initialize weights
         if equal_init:
             self._initialize_equal_weights()
+        else:
+            self._initialize_he_weights()
     
     def _initialize_equal_weights(self):
         """Initialize first layer weights to give equal importance to all input features."""
@@ -86,6 +88,18 @@ class F1NeuralNetwork(nn.Module):
                 first_layer.bias.fill_(0.0)
         
         print(f"  Initialized first layer with equal weights: {init_value:.4f} for all features")
+    
+    def _initialize_he_weights(self):
+        """Initialize all layers with He/Kaiming initialization (optimal for ReLU)."""
+        with torch.no_grad():
+            for module in self.modules():
+                if isinstance(module, nn.Linear):
+                    # He/Kaiming initialization for ReLU
+                    nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0.0)
+        
+        print(f"  Initialized all layers with He/Kaiming initialization (optimal for ReLU)")
     
     def forward(self, x):
         """Forward pass through the network."""
@@ -153,8 +167,23 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     # Removed TrackID: had lowest feature importance (0.0993), not providing value
     # Added ConstructorTrackAvg: Constructor's average finish at specific track (complements HistoricalTrackAvgPosition)
     # Using both SeasonPoints and SeasonStanding: improves exact accuracy to 20.6% (vs 15.4% baseline)
-    feature_cols = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                   'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']  # GridPosition = AvgGridPosition (season-specific)
+    # Check which features are available in the data
+    # Base features (used by both regression and classification)
+    # Added PointsGapToLeader and FormTrend - these are already calculated in collect_data.py
+    # and available in the data pipeline, testing if they improve performance
+    desired_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                       'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType',
+                       'PointsGapToLeader', 'FormTrend']
+    
+    # Use only features that exist in the dataframe
+    feature_cols = [f for f in desired_features if f in df.columns]
+    
+    # If SeasonStanding is missing but SeasonPoints exists, use SeasonPoints only
+    if 'SeasonStanding' not in feature_cols and 'SeasonPoints' in feature_cols:
+        print(f"  Note: SeasonStanding not in data, using SeasonPoints only (regenerate data with collect_data.py for both features)")
+    
+    if len(feature_cols) == 0:
+        raise ValueError("No valid feature columns found in data!")
     
     # Start with all rows
     valid_mask = pd.Series([True] * len(df), index=df.index)
@@ -456,12 +485,12 @@ def train_model(X_train, y_train, X_val, y_val,
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Initialize model (regression - outputs single position value)
-    # equal_init=True ensures all features start with equal weights
+    # equal_init=False uses He/Kaiming initialization (optimal for ReLU)
     # Input size determined dynamically from feature count
     input_size = X_train.shape[1]
     # Increased regularization: dropout 0.3 → 0.4 to reduce overfitting (validation-test gap)
     model = F1NeuralNetwork(input_size=input_size, hidden_sizes=hidden_sizes, 
-                           dropout_rate=0.4, equal_init=True).to(device)
+                           dropout_rate=0.4, equal_init=False).to(device)
     
     # Loss function: Use Position-Aware Loss to improve exact position accuracy
     # Combines Huber loss (robust to outliers) with extra penalty for exact position misses

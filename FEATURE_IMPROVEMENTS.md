@@ -373,6 +373,308 @@ The following features were tested but ultimately removed:
 4. **Progressive updates**: For multiple future races, update features progressively based on previous predictions
 5. **Consistent feature calculation**: Ensure training and prediction use the same feature calculation logic
 
+## Recent Improvements (Post-Initial Development)
+
+### 5. SeasonStanding Feature Addition
+
+**Change**: Added `SeasonStanding` feature to complement `SeasonPoints`.
+
+**What it captures**: Driver's current championship position (1 = leader, higher = worse position).
+
+**Why it's important**:
+- **Relative ranking**: Provides ordinal position in championship, not just absolute points
+- **Competitive context**: A driver in P1 vs P2 is different even if points are close
+- **Complements SeasonPoints**: Two drivers might have similar points but different standings due to tie-breakers
+- **Motivation factor**: Drivers fighting for specific championship positions (P1, P3, P5) may have different motivation levels
+
+**Implementation**: 
+- Calculated from all completed races in the season
+- Updated progressively for future race predictions
+- Defaults to 20 (worst position) for new drivers
+
+**Testing Results**: 
+- Tested four scenarios: SeasonPoints only, SeasonStanding only, both, and neither
+- **SeasonStanding only**: Best MAE, good exact accuracy
+- **Both features**: Best exact accuracy, slightly worse MAE
+- **Decision**: Used both features for optimal balance
+
+**Impact**: Improved model's ability to distinguish between drivers in similar competitive situations but different championship positions.
+
+---
+
+### 6. Additional Features: PointsGapToLeader and FormTrend
+
+**PointsGapToLeader**:
+- **What it captures**: Points difference to the championship leader
+- **Why it matters**: Captures competitive pressure and motivation
+- **Implementation**: Calculated as `max_points - driver_points` for each driver
+
+**FormTrend**:
+- **What it captures**: Momentum direction (positive = improving, negative = declining)
+- **Why it matters**: Distinguishes drivers on upward vs. downward trends
+- **Implementation**: Calculated from recent form changes
+
+**Note**: These features were added for classification model but are available for regression models that expect 11 features.
+
+---
+
+### 7. Classification Model Development
+
+**Change**: Created a separate classification model (`top10_classification`) that directly predicts position classes (1-10) instead of regression scores.
+
+**Architecture**:
+- **Model**: `F1ClassificationNetwork`
+- **Output**: 10 classes (positions 1-10)
+- **Hidden layers**: `[256, 128, 64]`
+- **Dropout**: 0.35
+- **Loss function**: `LabelSmoothingCrossEntropy` (regularization to prevent overconfidence)
+- **Ensemble**: 3 models with different random seeds
+
+**Key Features**:
+- **Hungarian Algorithm**: Ensures unique position assignments by minimizing cost matrix (negative log probabilities)
+- **Class weights**: Balanced to emphasize top-10 accuracy (removed top-3 boost to focus on overall accuracy)
+- **Early stopping**: Based on validation MAE with 50-epoch patience
+- **Learning rate**: 0.003 with `ReduceLROnPlateau` scheduler
+
+**Position Assignment**:
+- Uses Hungarian algorithm (linear_sum_assignment) to assign unique positions
+- For <10 drivers: Greedy assignment to highest probability among available positions
+- Ensures no duplicate positions in predictions
+
+**Results**: Classification model provides alternative approach with different strengths (better exact accuracy in some cases, though regression generally performs better overall).
+
+---
+
+### 8. Ensemble Modeling
+
+**Change**: Implemented ensemble of 3 models for both regression and classification.
+
+**Implementation**:
+- Train 3 models with different random seeds
+- Average predictions (regression) or probabilities (classification)
+- Reduces variance and improves generalization
+
+**Impact**:
+- More stable predictions
+- Better handling of edge cases
+- Improved overall accuracy
+
+---
+
+### 9. Loss Function Experiments
+
+**PositionAwareLoss**:
+- **Purpose**: Penalizes exact position misses more heavily
+- **Implementation**: Combines MSE with exact match penalty
+- **Parameters**: `exact_weight=5.0` (tested various values)
+- **Result**: Best balance of exact accuracy and overall MAE
+
+**Top3WeightedLoss** (tested, reverted):
+- **Purpose**: Penalize top-3 errors more heavily
+- **Result**: Increased exact accuracy but worsened overall MAE and within-3 accuracy
+- **Decision**: Reverted as it "tanked the accuracy"
+
+**LabelSmoothingCrossEntropy** (classification):
+- **Purpose**: Prevent overconfidence in classification predictions
+- **Implementation**: Smooths target distribution
+- **Impact**: Better generalization, reduced overfitting
+
+---
+
+### 10. Weight Initialization: He/Kaiming Initialization
+
+**Change**: Switched from custom "equal weights" initialization to He/Kaiming initialization.
+
+**Why it matters**:
+- **ReLU activations**: He/Kaiming initialization is optimal for ReLU and its variants
+- **Gradient flow**: Prevents vanishing/exploding gradients
+- **Training stability**: Better convergence and faster training
+
+**Implementation**:
+- **Formula**: `Variance = 2 / fan_in`
+- **Method**: `nn.init.kaiming_uniform_` for all Linear layers
+- **Applied to**: Both regression and classification models
+
+**Comparison**:
+- **Equal weights**: Custom initialization with all weights set to small equal values
+- **He/Kaiming**: Standard initialization for ReLU networks
+- **Result**: He/Kaiming provides better training dynamics and potentially improved performance
+
+**Test Results** (with He/Kaiming initialization):
+- **Test MAE**: 1.677 positions (filtered, top 10 only)
+- **Exact position**: 18.0%
+- **Within 1 position**: 34.2%
+- **Within 2 positions**: 67.5%
+- **Within 3 positions**: 86.4%
+
+---
+
+### 11. Model Architecture Refinements
+
+**Regression Model**:
+- **Architecture**: `[128, 64, 32]` hidden layers
+- **Dropout**: 0.4
+- **BatchNorm**: After ReLU, before dropout
+- **Features**: 9 base features (SeasonPoints, SeasonStanding, SeasonAvgFinish, HistoricalTrackAvgPosition, ConstructorStanding, ConstructorTrackAvg, GridPosition, RecentForm, TrackType)
+
+**Classification Model**:
+- **Architecture**: `[256, 128, 64]` hidden layers
+- **Dropout**: 0.35
+- **BatchNorm**: Before ReLU
+- **Output**: 10 classes with softmax
+- **Early stopping**: Validation MAE-based with 50-epoch patience
+
+---
+
+### 12. Feature Mismatch Handling
+
+**Issue**: Models trained with different feature sets (9 vs 11 features) caused prediction errors.
+
+**Solution**: 
+- Dynamic feature selection based on `scaler.n_features_in_`
+- Calculate all features (including PointsGapToLeader, FormTrend) but select based on model expectations
+- Ensures compatibility between training and prediction
+
+**Implementation**:
+- Check scaler's expected feature count
+- Select appropriate feature columns from DataFrame
+- Calculate optional features if model expects them
+
+---
+
+### 13. Historical Track Average Default Fix
+
+**Issue**: Rookies showing `HistoricalTrackAvgPosition = 15.0` instead of `10.0`.
+
+**Fix**: 
+- Updated `collect_data.py` to use `10.0` as default (lines 390, 904, 906)
+- Updated `top10/predict.py` to use `10.0` as default (already correct)
+- Ensures consistent mid-field default across all code paths
+
+**Rationale**: `10.0` represents mid-field position (out of 20 drivers), more reasonable than `15.0` for rookies who typically start in competitive teams.
+
+---
+
+### 14. Training Improvements
+
+**Early Stopping**:
+- **Metric**: Validation MAE (for both regression and classification)
+- **Patience**: 50 epochs (classification), 100 epochs (regression)
+- **Impact**: Prevents overfitting, saves training time
+
+**Learning Rate Scheduling**:
+- **Scheduler**: `ReduceLROnPlateau`
+- **Factor**: 0.5 (halve learning rate when plateau detected)
+- **Patience**: 10 epochs
+- **Min LR**: 1e-6
+
+**Class Weights** (Classification):
+- Initially tested top-3 boost (1.2x-1.6x multiplier)
+- Removed to focus on overall top-10 accuracy
+- Balanced weights for all 10 position classes
+
+---
+
+### 15. Prediction Improvements
+
+**Dynamic Feature Selection**:
+- Automatically detects model's expected feature count
+- Calculates features on-demand based on model requirements
+- Handles both 9-feature and 11-feature models seamlessly
+
+**Progressive State Updates**:
+- For multiple future races, updates features progressively
+- Uses predicted results from previous races to calculate features for next race
+- Maintains temporal consistency
+
+**Display Enhancements**:
+- Shows predicted scores in regression output
+- Formatted tables for easy reading
+- Includes all relevant features in display
+
+---
+
+## Performance Comparison: Equal Weights vs. He/Kaiming Initialization
+
+### Current Results (He/Kaiming Initialization)
+
+**Test Set (Filtered, Top 10 Only)**:
+- **MAE**: 1.677 positions
+- **RMSE**: 2.083 positions
+- **R²**: 0.4693
+- **Exact position**: 18.0%
+- **Within 1 position**: 34.2%
+- **Within 2 positions**: 67.5%
+- **Within 3 positions**: 86.4%
+
+**Cross-Validation Average**:
+- **MAE**: 1.769 positions
+- **Exact position**: 17.9%
+- **Within 1 position**: 34.6%
+- **Within 2 positions**: 63.4%
+- **Within 3 positions**: 82.8%
+
+**Feature Importances** (from first layer weights):
+- GridPosition: 0.1308 (highest)
+- RecentForm: 0.1244
+- ConstructorStanding: 0.1142
+- SeasonStanding: 0.1131
+- ConstructorTrackAvg: 0.1126
+- HistoricalTrackAvgPosition: 0.1095
+- SeasonAvgFinish: 0.0980
+- SeasonPoints: 0.0973
+- TrackType: 0.1000
+
+### Comparison Script
+
+A comparison script (`compare_weight_initialization.py`) has been created to directly compare Equal Weights vs. He/Kaiming initialization. The script:
+
+1. **Trains both models** with identical hyperparameters
+2. **Evaluates on test set** with comprehensive metrics
+3. **Compares performance** across all accuracy metrics
+4. **Determines winner** based on majority of metrics
+
+**Script Features**:
+- Uses same data splits for fair comparison
+- Same architecture, loss function, and training procedure
+- Only difference is weight initialization method
+- Reports detailed metrics: MAE, RMSE, R², Exact Accuracy, Within 1/2/3 positions
+
+**Note**: The script requires NumPy < 2.0 due to compatibility issues with pandas/scipy. To run the comparison:
+```bash
+# Fix environment first (if needed)
+pip install "numpy<2"
+python compare_weight_initialization.py
+```
+
+### Theoretical Comparison
+
+**Equal Weights Initialization**:
+- **Method**: First layer weights set to equal value (`1.0 / sqrt(input_size)`)
+- **Rationale**: Ensures all features start with equal importance
+- **Other layers**: Use He/Kaiming initialization
+- **Potential issue**: May limit model's ability to learn feature importance naturally
+
+**He/Kaiming Initialization**:
+- **Method**: All layers use `kaiming_uniform_` initialization
+- **Formula**: `Variance = 2 / fan_in`
+- **Rationale**: Optimal for ReLU activations, prevents vanishing/exploding gradients
+- **Benefits**: 
+  - Better gradient flow during backpropagation
+  - Faster convergence
+  - More stable training dynamics
+  - Standard practice for ReLU networks
+
+**Expected Outcome**: He/Kaiming initialization should provide:
+- Similar or better MAE
+- Better training stability
+- Faster convergence
+- More natural feature importance learning
+
+**Current Status**: He/Kaiming initialization is currently used in production models and shows strong performance (MAE: 1.677, Within 3: 86.4%).
+
+---
+
 ## Future Considerations
 
 Potential areas for further improvement:
@@ -382,4 +684,7 @@ Potential areas for further improvement:
 3. **Track characteristics**: Sector times, DRS zones, overtaking difficulty
 4. **Driver-track affinity**: More sophisticated track-specific modeling
 5. **Constructor-track performance**: Team historical performance at specific circuits
+6. **Hybrid models**: Combine regression and classification predictions
+7. **Attention mechanisms**: Focus on most relevant features per driver
+8. **Time-series modeling**: Explicitly model temporal dependencies
 
