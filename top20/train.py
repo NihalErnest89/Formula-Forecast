@@ -159,7 +159,7 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     Returns:
         Tuple of (X, y, label_encoder, filter_stats, feature_names)
     """
-    # Base features (8 features, ConstructorTrackAvg added - showed 1.8% MAE improvement)
+    # Base features (9 features)
     # Note: GridPosition (AvgGridPosition) is season-specific average grid position (not actual qualifying position)
     # This matches future prediction scenario where we don't have qualifying results yet
     # Using season-specific average (only races from current season) instead of all-time average
@@ -167,13 +167,9 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     # Removed TrackID: had lowest feature importance (0.0993), not providing value
     # Added ConstructorTrackAvg: Constructor's average finish at specific track (complements HistoricalTrackAvgPosition)
     # Using both SeasonPoints and SeasonStanding: improves exact accuracy to 20.6% (vs 15.4% baseline)
-    # Check which features are available in the data
-    # Base features (used by both regression and classification)
-    # Added PointsGapToLeader and FormTrend - these are already calculated in collect_data.py
-    # and available in the data pipeline, testing if they improve performance
+    # Removed PointsGapToLeader and FormTrend - found to be useless
     desired_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                       'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType',
-                       'PointsGapToLeader', 'FormTrend']
+                       'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']
     
     # Use only features that exist in the dataframe
     feature_cols = [f for f in desired_features if f in df.columns]
@@ -245,6 +241,38 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     
     print(f"  Filtering: {filter_stats['initial_count']} -> {filter_stats['final_count']} samples "
           f"({filter_stats['initial_count'] - filter_stats['final_count']} removed)")
+    
+    # CRITICAL: Renumber positions per race after filtering
+    # If we removed DNFs/outliers, positions need to shift up (e.g., if position 3 was removed, position 4 becomes 3)
+    if 'ActualPosition' in df_filtered.columns and ('Year' in df_filtered.columns or 'RoundNumber' in df_filtered.columns):
+        # Group by race (Year + RoundNumber + EventName if available)
+        if 'Year' in df_filtered.columns and 'RoundNumber' in df_filtered.columns:
+            if 'EventName' in df_filtered.columns:
+                race_groups = df_filtered.groupby(['Year', 'RoundNumber', 'EventName'])
+            else:
+                race_groups = df_filtered.groupby(['Year', 'RoundNumber'])
+        elif 'Year' in df_filtered.columns:
+            if 'EventName' in df_filtered.columns:
+                race_groups = df_filtered.groupby(['Year', 'EventName'])
+            else:
+                race_groups = df_filtered.groupby('Year')
+        else:
+            race_groups = None
+        
+        if race_groups is not None:
+            # Renumber positions within each race (1, 2, 3, ...)
+            # Sort by original position first, then assign new sequential positions
+            df_filtered = df_filtered.copy()
+            
+            # Iterate through each race and renumber positions
+            for (race_key, group) in race_groups:
+                # Sort by original position to maintain order
+                sorted_indices = group.sort_values('ActualPosition').index
+                # Assign new sequential positions (1, 2, 3, ...)
+                for new_pos, idx in enumerate(sorted_indices, start=1):
+                    df_filtered.at[idx, 'ActualPosition'] = new_pos
+            
+            print(f"  Renumbered positions per race after filtering")
     
     # Check if TrackType exists in data, if not add it (for backward compatibility)
     if 'TrackType' not in df_filtered.columns and 'EventName' in df_filtered.columns:
@@ -459,7 +487,7 @@ def get_feature_importance(model, feature_names, device):
 def train_model(X_train, y_train, X_val, y_val,
                 epochs=300, batch_size=32, learning_rate=0.001, device='cpu',
                 hidden_sizes=[128, 64, 32], feature_names=None, early_stop_patience=None, 
-                track_weights=True):
+                track_weights=True, **kwargs):
     """
     Train the neural network model.
     
@@ -481,7 +509,7 @@ def train_model(X_train, y_train, X_val, y_val,
     train_dataset = F1Dataset(X_train, y_train)
     val_dataset = F1Dataset(X_val, y_val)
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Initialize model (regression - outputs single position value)
@@ -495,7 +523,9 @@ def train_model(X_train, y_train, X_val, y_val,
     # Loss function: Use Position-Aware Loss to improve exact position accuracy
     # Combines Huber loss (robust to outliers) with extra penalty for exact position misses
     # Weight=5.0 improves exact accuracy by ~1% and MAE by ~0.02 compared to weight=2.0
-    criterion = PositionAwareLoss(exact_weight=5.0, base_loss='huber', delta=1.0)
+    # Allow exact_weight to be passed as parameter (default 5.0 for backward compatibility)
+    exact_weight = kwargs.get('exact_weight', 5.0)
+    criterion = PositionAwareLoss(exact_weight=exact_weight, base_loss='huber', delta=1.0)
     # Increased regularization: weight decay 1e-4 → 2e-4 to reduce overfitting
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=2e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
@@ -803,41 +833,28 @@ def main():
     # Using [256, 128, 64] with improved hyperparameters
     hidden_sizes = [256, 128, 64]
     
-    # Train ensemble of 3 models (ensemble improves accuracy by reducing variance)
+    # Train single model
     print("\n" + "=" * 60)
-    print("TRAINING ENSEMBLE (3 MODELS)")
+    print("TRAINING MODEL")
     print("=" * 60)
-    print("Training 3 models with different random seeds for ensemble prediction")
     
-    models = []
-    histories = []
+    torch.manual_seed(42)
+    np.random.seed(42)
     
-    for i in range(3):
-        print(f"\nTraining ensemble model {i+1}/3...")
-        torch.manual_seed(42 + i)
-        np.random.seed(42 + i)
-        
-        # Optimized hyperparameters from training improvements test:
-        # - LR 0.005: +8.37% improvement in validation MAE
-        # - Lower Dropout 0.3: +1.43% improvement
-        # - Reduced Weight Decay: +1.11% improvement
-        model, history = train_model(
-            X_train_split, y_train_split,
-            X_val_split, y_val_split,
-            epochs=300,  # Increased from 160 - allow more training with lenient early stopping
-            batch_size=32,
-            learning_rate=0.005,  # Optimized: increased from 0.001 (8.37% improvement)
-            device=device,
-            hidden_sizes=hidden_sizes,
-            feature_names=feature_names
-        )
-        models.append(model)
-        histories.append(history)
-        print(f"  Model {i+1} training complete")
-    
-    # Use the first model for evaluation/plotting (they should be similar)
-    model = models[0]
-    history = histories[0]
+    # Optimized hyperparameters from training improvements test:
+    # - LR 0.005: +8.37% improvement in validation MAE
+    # - Lower Dropout 0.3: +1.43% improvement
+    # - Reduced Weight Decay: +1.11% improvement
+    model, history = train_model(
+        X_train_split, y_train_split,
+        X_val_split, y_val_split,
+        epochs=300,  # Increased from 160 - allow more training with lenient early stopping
+        batch_size=32,
+        learning_rate=0.005,  # Optimized: increased from 0.001 (8.37% improvement)
+        device=device,
+        hidden_sizes=hidden_sizes,
+        feature_names=feature_names
+    )
     
     # Plot training history
     plot_training_history(history)
@@ -949,13 +966,12 @@ def main():
         test_mae = test_rmse = test_r2 = test_w1 = test_w2 = test_w3 = None
         test_mae_all = test_rmse_all = test_r2_all = test_w1_all = test_w2_all = test_w3_all = None
     
-    # Save all ensemble models (no label encoder for regression)
+    # Save model (no label encoder for regression)
     print("\n" + "=" * 60)
-    print("SAVING ENSEMBLE MODELS")
+    print("SAVING MODEL")
     print("=" * 60)
-    for i, ensemble_model in enumerate(models):
-        save_model(ensemble_model, scaler, None, model_index=i)
-    print(f"\nSaved {len(models)} ensemble models")
+    save_model(model, scaler, None, model_index=None)
+    print(f"\nModel saved successfully")
     
     # Save results - convert all numpy types to native Python types for JSON serialization
     # Helper function to convert numpy types to native Python types

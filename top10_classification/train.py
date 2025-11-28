@@ -311,7 +311,7 @@ def train_model(X_train, y_train, X_val, y_val, device, num_epochs=300,
     # Early stopping to prevent overfitting - use MAE instead of loss for more stable early stopping
     best_val_mae = float('inf')
     patience_counter = 0
-    early_stop_patience = 50  # Lenient patience - allow extensive training
+    early_stop_patience = 100  # Increased patience - allow more training time
     print(f"  Learning rate: {optimized_lr:.6f}")
     
     # Training history
@@ -497,61 +497,39 @@ def main():
     
     print(f"Train fold size: {len(X_train_fold)}, Val fold size: {len(X_val_fold)}")
     
-    # Train ensemble of 3 models (like regression)
+    # Train single model
     print("\n" + "=" * 70)
-    print("TRAINING ENSEMBLE (3 MODELS)")
+    print("TRAINING MODEL")
     print("=" * 70)
-    print("Training 3 models with different random seeds for ensemble prediction")
     
-    models = []
-    histories = []
+    torch.manual_seed(42)
+    np.random.seed(42)
     
-    for i in range(3):
-        print(f"\nTraining ensemble model {i+1}/3...")
-        torch.manual_seed(42 + i)
-        np.random.seed(42 + i)
-        
-        model, history = train_model(
-            X_train_fold, y_train_fold,
-            X_val_fold, y_val_fold,
-            device=device,
-            num_epochs=300,  # Match regression's 300 epochs
-            learning_rate=0.003,  # Optimized learning rate
-            weight_decay=1e-4,
-            batch_size=64,
-            use_class_weights=True,
-            feature_names=feature_names  # Pass for weight printing
-        )
-        models.append(model)
-        histories.append(history)
-        print(f"  Model {i+1} training complete")
+    model, history = train_model(
+        X_train_fold, y_train_fold,
+        X_val_fold, y_val_fold,
+        device=device,
+        num_epochs=300,  # Match regression's 300 epochs
+        learning_rate=0.003,  # Optimized learning rate
+        weight_decay=1e-4,
+        batch_size=64,
+        use_class_weights=True,
+        feature_names=feature_names  # Pass for weight printing
+    )
     
-    # Use first model for evaluation/display
-    model = models[0]
-    history = histories[0]
-    
-    # Evaluate ensemble on validation set
-    print("\nEvaluating ensemble on validation set...")
+    # Evaluate on validation set
+    print("\nEvaluating on validation set...")
     val_dataset = F1ClassificationDataset(X_val_fold, y_val_fold)
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
     
     all_preds = []
     all_targets = []
     with torch.no_grad():
+        model.eval()
         for X_batch, y_batch in val_loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            # Ensemble prediction: average probabilities from all models
-            ensemble_probs = None
-            for m in models:
-                m.eval()
-                outputs = m(X_batch)
-                probs = F.softmax(outputs, dim=1)
-                if ensemble_probs is None:
-                    ensemble_probs = probs
-                else:
-                    ensemble_probs += probs
-            ensemble_probs /= len(models)
-            preds = torch.argmax(ensemble_probs, dim=1) + 1  # Convert 0-9 to 1-10
+            outputs = model(X_batch)
+            preds = torch.argmax(outputs, dim=1) + 1  # Convert 0-9 to 1-10
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(y_batch.cpu().numpy())
     
@@ -565,36 +543,27 @@ def main():
     val_top3_actual = set(np.array(all_targets)[np.array(all_targets) <= 3])
     val_top3_acc = len(val_top3_pred & val_top3_actual) / max(len(val_top3_actual), 1)
     
-    print(f"\nValidation Results (Ensemble):")
+    print(f"\nValidation Results:")
     print(f"  MAE: {val_mae:.4f}")
     print(f"  Exact Accuracy: {val_exact*100:.2f}%")
     print(f"  Within 1 Position: {val_within1*100:.2f}%")
     print(f"  Within 3 Positions: {val_within3*100:.2f}%")
     print(f"  Top-3 Accuracy: {val_top3_acc*100:.2f}%")
     
-    # Evaluate ensemble on test set
+    # Evaluate on test set
     if X_test_scaled is not None and y_test is not None:
-        print("\nEvaluating ensemble on test set...")
+        print("\nEvaluating on test set...")
         test_dataset = F1ClassificationDataset(X_test_scaled, y_test)
         test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
         
         all_preds = []
         all_targets = []
         with torch.no_grad():
+            model.eval()
             for X_batch, y_batch in test_loader:
                 X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-                # Ensemble prediction
-                ensemble_probs = None
-                for m in models:
-                    m.eval()
-                    outputs = m(X_batch)
-                    probs = F.softmax(outputs, dim=1)
-                    if ensemble_probs is None:
-                        ensemble_probs = probs
-                    else:
-                        ensemble_probs += probs
-                ensemble_probs /= len(models)
-                preds = torch.argmax(ensemble_probs, dim=1) + 1
+                outputs = model(X_batch)
+                preds = torch.argmax(outputs, dim=1) + 1
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(y_batch.cpu().numpy())
         
@@ -608,17 +577,16 @@ def main():
         test_top3_actual = set(np.array(all_targets)[np.array(all_targets) <= 3])
         test_top3_acc = len(test_top3_pred & test_top3_actual) / max(len(test_top3_actual), 1)
         
-        print(f"\nTest Results (Ensemble):")
+        print(f"\nTest Results:")
         print(f"  MAE: {test_mae:.4f}")
         print(f"  Exact Accuracy: {test_exact*100:.2f}%")
         print(f"  Within 1 Position: {test_within1*100:.2f}%")
         print(f"  Within 3 Positions: {test_within3*100:.2f}%")
         print(f"  Top-3 Accuracy: {test_top3_acc*100:.2f}%")
     
-    # Save ensemble models
-    print("\nSaving ensemble models...")
-    for i, m in enumerate(models):
-        save_model(m, scaler, model_index=i)
+    # Save model
+    print("\nSaving model...")
+    save_model(model, scaler, model_index=None)
     
     print("\nTraining complete!")
 

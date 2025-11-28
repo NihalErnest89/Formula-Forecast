@@ -53,12 +53,8 @@ def save_model(model, scaler, label_encoder, output_dir: str = None, model_index
     
     output_dir.mkdir(exist_ok=True, parents=True)
     
-    if model_index is not None:
-        # Ensemble model
-        model_path = output_dir / f'f1_predictor_model_top10_ensemble_{model_index}.pth'
-    else:
-        # Single model (backward compatibility)
-        model_path = output_dir / 'f1_predictor_model_top10.pth'
+    # Single model
+    model_path = output_dir / 'f1_predictor_model_top10.pth'
     
     scaler_path = output_dir / 'scaler_top10.pkl'
     encoder_path = output_dir / 'label_encoder_top10.pkl'
@@ -96,45 +92,70 @@ def main():
     print("\nLoading data...")
     training_df, test_df, metadata = load_data()
     
+    # Verify that training data includes expected years (2020-2024)
+    expected_years = {2020, 2021, 2022, 2023, 2024}
+    actual_years = set(training_df['Year'].unique()) if 'Year' in training_df.columns else set()
+    
+    if not expected_years.issubset(actual_years):
+        missing_years = expected_years - actual_years
+        print(f"\n{'='*70}")
+        print("WARNING: Training data is missing expected years!")
+        print(f"{'='*70}")
+        print(f"Expected years: {sorted(expected_years)}")
+        print(f"Actual years in data: {sorted(actual_years)}")
+        print(f"Missing years: {sorted(missing_years)}")
+        print(f"\nThe data needs to be regenerated with the expanded dataset (2020-2024).")
+        print(f"Please run: python collect_data.py")
+        print(f"{'='*70}\n")
+        raise ValueError(
+            f"Training data missing years: {sorted(missing_years)}. "
+            f"Please run 'python collect_data.py' to regenerate data with years 2020-2024."
+        )
+    
     print(f"Training samples: {len(training_df)}")
     print(f"Test samples: {len(test_df)}")
+    print(f"Training years: {sorted(actual_years)}")
     
     # Prepare training data (filtered - no DNFs/outliers, top 10 only)
     # Test results show: Training on top 10 only improves top 10 MAE from 3.043 to 1.861
     # and "Within 3" accuracy from 55.5% to 79.1%
     print("\nPreparing training data (top 10 positions only)...")
     
-    # TIME-AWARE K-FOLD CROSS-VALIDATION: Use all 2022-2024 for training/validation
+    # TIME-AWARE K-FOLD CROSS-VALIDATION: Use all 2020-2024 for training/validation
     # Split by year to prevent data leakage (time-series data)
     print("\nUsing K-Fold Cross-Validation (Time-Aware) for validation...")
-    print("  This allows us to use all training years (2022-2024) for validation")
+    print("  This allows us to use all training years (2020-2024) for validation")
     print("  while still respecting temporal order (no future data leakage)")
     
-    def k_fold_time_based_split(df, n_splits=3):
+    def k_fold_time_based_split(df, n_splits=None):
         """Time-based k-fold split for time-series data. Splits by year."""
         years = sorted(df['Year'].unique())
         n_years = len(years)
         
+        # Default to one fold per year
+        if n_splits is None:
+            n_splits = n_years
+        
         if n_splits > n_years:
             n_splits = n_years
         
-        fold_size = n_years // n_splits
+        # For time-series, use one year per fold (most common approach)
+        # This ensures each validation set is from a single year
         folds = []
-        
         for i in range(n_splits):
-            if i == n_splits - 1:
-                # Last fold gets remaining years
-                val_years = years[i * fold_size:]
-            else:
-                val_years = years[i * fold_size:(i + 1) * fold_size]
-            
-            train_years = [y for y in years if y not in val_years]
+            # Each fold validates on one year, trains on all others
+            val_years = [years[i]]
+            train_years = [y for y in years if y != years[i]]
             folds.append((train_years, val_years))
         
         return folds
     
     # Perform k-fold cross-validation
-    n_splits = 3  # Use 3 folds (one per year: 2022, 2023, 2024)
+    # Use one fold per year (5 folds for 2020-2024)
+    years_in_data = sorted(training_df['Year'].unique())
+    n_splits = len(years_in_data)  # One fold per year
+    print(f"  Training years available: {years_in_data}")
+    print(f"  Using {n_splits}-fold cross-validation (one fold per year)")
     folds = k_fold_time_based_split(training_df, n_splits=n_splits)
     
     cv_results = []
@@ -259,8 +280,8 @@ def main():
     print(f"    Within 3 positions: {avg_val_w3:.1f}%")
     
     # Use the model from the last fold (trained on all years except the last validation year)
-    # Or train a final model on ALL training data (2022-2024)
-    print(f"\nTraining final model on ALL training data (2022-2024)...")
+    # Or train a final model on ALL training data (2020-2024)
+    print(f"\nTraining final model on ALL training data (2020-2024)...")
     X_train_all, y_train_all, _, train_stats, feature_names = prepare_features_and_labels(
         training_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
     )
@@ -268,13 +289,60 @@ def main():
     scaler = StandardScaler()
     X_train_all_scaled = scaler.fit_transform(X_train_all)
     
-    # For validation during final training, use the last year (2024)
+    # For validation during final training, use the last year (2024) from training data
     val_year = training_df['Year'].max()
     val_df_final = training_df[training_df['Year'] == val_year].copy()
+    
+    # Add an index column to track original row positions before filtering
+    val_df_final = val_df_final.reset_index(drop=True)
+    val_df_final['_original_index'] = range(len(val_df_final))
+    
     X_val_final, y_val_final, _, val_stats, _ = prepare_features_and_labels(
         val_df_final, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
     )
     X_val_final_scaled = scaler.transform(X_val_final)
+    
+    # Recreate filtered dataframe by applying same filtering logic
+    val_df_filtered = val_df_final.copy()
+    valid_mask = pd.Series([True] * len(val_df_filtered), index=val_df_filtered.index)
+    
+    # Apply same filters as prepare_features_and_labels
+    if 'ActualPosition' in val_df_filtered.columns:
+        valid_mask = valid_mask & (val_df_filtered['ActualPosition'] <= 10)
+        valid_mask = valid_mask & val_df_filtered['ActualPosition'].notna()
+    
+    if 'IsDNF' in val_df_filtered.columns:
+        dnf_mask = val_df_filtered['IsDNF'].fillna(False).astype(bool)
+        valid_mask = valid_mask & ~dnf_mask
+    
+    if 'GridPosition' in val_df_filtered.columns and 'ActualPosition' in val_df_filtered.columns:
+        valid_for_outlier = valid_mask & val_df_filtered['ActualPosition'].notna() & val_df_filtered['GridPosition'].notna()
+        if valid_for_outlier.any():
+            position_diff = val_df_filtered.loc[valid_for_outlier, 'ActualPosition'] - val_df_filtered.loc[valid_for_outlier, 'GridPosition']
+            outlier_mask_local = position_diff > 6
+            outlier_mask = pd.Series(False, index=val_df_filtered.index)
+            outlier_mask.loc[valid_for_outlier] = outlier_mask_local
+            valid_mask = valid_mask & ~outlier_mask
+    
+    val_df_filtered = val_df_filtered[valid_mask].copy()
+    
+    # Renumber positions per race (same as prepare_features_and_labels)
+    if 'ActualPosition' in val_df_filtered.columns and 'Year' in val_df_filtered.columns and 'RoundNumber' in val_df_filtered.columns:
+        if 'EventName' in val_df_filtered.columns:
+            race_groups = val_df_filtered.groupby(['Year', 'RoundNumber', 'EventName'])
+        else:
+            race_groups = val_df_filtered.groupby(['Year', 'RoundNumber'])
+        
+        for (race_key, group) in race_groups:
+            sorted_indices = group.sort_values('ActualPosition').index
+            for new_pos, idx in enumerate(sorted_indices, start=1):
+                val_df_filtered.at[idx, 'ActualPosition'] = new_pos
+    
+    # Ensure we have matching number of rows (should match after same filtering)
+    if len(val_df_filtered) != len(y_val_final):
+        print(f"  Warning: Filtered dataframe has {len(val_df_filtered)} rows but predictions have {len(y_val_final)} rows")
+        # Use first N rows that match
+        val_df_filtered = val_df_filtered.iloc[:len(y_val_final)].copy()
     
     X_train_split = X_train_all_scaled
     X_val_split = X_val_final_scaled
@@ -321,42 +389,32 @@ def main():
     # Position-aware loss to improve exact position accuracy
     hidden_sizes = [128, 64, 32]
     
-    # Train ensemble of 3 models (tested: ensemble improves Top-3 accuracy from 29.7% to 30.3% and MAE from 1.874 to 1.869)
+    # Train single model (ensemble testing showed minimal benefit - single model performs better on exact match)
     print("\n" + "=" * 60)
-    print("TRAINING ENSEMBLE (3 MODELS)")
+    print("TRAINING MODEL")
     print("=" * 60)
-    print("Training 3 models with different random seeds for ensemble prediction")
     
-    models = []
-    histories = []
+    torch.manual_seed(42)
+    np.random.seed(42)
     
-    for i in range(3):
-        print(f"\nTraining ensemble model {i+1}/3...")
-        torch.manual_seed(42 + i)
-        np.random.seed(42 + i)
-        
-        # Updated hyperparameters with increased regularization:
-        # - LR 0.005: optimized learning rate
-        # - Dropout 0.4: increased from 0.3 to reduce overfitting (validation-test gap)
-        # - Weight Decay 2e-4: increased from 1e-4 to reduce overfitting
-        # - Position-Aware Loss: improves exact position accuracy
-        model, history = train_model(
-            X_train_split, y_train_split,
-            X_val_split, y_val_split,
-            epochs=300,  # Increased from 160 - allow more training with lenient early stopping
-            batch_size=32,
-            learning_rate=0.005,  # Optimized: increased from 0.001 (8.37% improvement)
-            device=device,
-            hidden_sizes=hidden_sizes,
-            feature_names=feature_names
-        )
-        models.append(model)
-        histories.append(history)
-        print(f"  Model {i+1} training complete")
-    
-    # Use the first model for evaluation/plotting (they should be similar)
-    model = models[0]
-    history = histories[0]
+    # Updated hyperparameters with increased regularization:
+    # - LR 0.005: optimized learning rate
+    # - Dropout 0.4: increased from 0.3 to reduce overfitting (validation-test gap)
+    # - Weight Decay 2e-4: increased from 1e-4 to reduce overfitting
+    # - Position-Aware Loss: improves exact position accuracy
+    model, history = train_model(
+        X_train_split, y_train_split,
+        X_val_split, y_val_split,
+        epochs=300,
+        batch_size=32,
+        learning_rate=0.005,  # Optimized: increased from 0.001 (8.37% improvement)
+        device=device,
+        hidden_sizes=hidden_sizes,
+        feature_names=feature_names,
+        exact_weight=5.0,  # Position-aware loss weight
+        early_stop_patience=50  # Stop if no improvement for 50 epochs
+    )
+    print(f"  Model training complete")
     
     # Plot training history
     script_dir = Path(__file__).parent
@@ -371,7 +429,7 @@ def main():
     print("\n" + "=" * 60)
     print("Final Model Evaluation on Validation Set (2024)")
     print("=" * 60)
-    print("Note: This is the final model trained on ALL training data (2022-2024)")
+    print("Note: This is the final model trained on ALL training data (2020-2024)")
     print("      Cross-validation results above show average performance across all folds")
     
     val_dataset = F1Dataset(X_val_split, y_val_split)
@@ -398,17 +456,55 @@ def main():
     for name, importance in feature_importances.items():
         print(f"  {name}: {importance:.4f}")
     
-    # Scatter plot: predicted vs actual positions
+    # Scatter plot: predicted vs actual positions (using ranked positions per race)
     script_dir = Path(__file__).parent
     images_dir = script_dir.parent / 'images'
     images_dir.mkdir(exist_ok=True, parents=True)
     
+    # Rank predictions per race (not across all validation samples)
+    # Create a dataframe with predictions and race info for grouping
+    # Use array positions (0, 1, 2, ...) to match predictions with dataframe rows
+    n_samples = min(len(val_preds), len(val_df_filtered))
+    val_results_df = val_df_filtered.iloc[:n_samples].copy()
+    val_results_df['PredictedRaw'] = val_preds[:n_samples]
+    val_results_df['ActualPosition'] = val_labels[:n_samples]
+    val_results_df['_array_index'] = range(n_samples)  # Track array position
+    
+    # Rank predictions within each race
+    val_preds_ranked = np.zeros(len(val_preds))
+    if 'Year' in val_results_df.columns and 'EventName' in val_results_df.columns and 'RoundNumber' in val_results_df.columns:
+        # Group by race and rank within each race
+        for (_year, _event, _round_num), group in val_results_df.groupby(['Year', 'EventName', 'RoundNumber']):
+            # Get array indices for this race group
+            group_array_indices = group['_array_index'].values
+            if len(group_array_indices) > 0:
+                group_preds = val_preds[group_array_indices]
+                # Rank predictions within this race (1 = best prediction, 10 = worst)
+                group_ranks = np.argsort(np.argsort(group_preds)) + 1
+                val_preds_ranked[group_array_indices] = group_ranks
+    else:
+        # Fallback: rank all predictions together if race info not available
+        val_preds_ranked = np.argsort(np.argsort(val_preds)) + 1
+    
+    # Group by actual position and compute average predicted rank for each actual position
+    unique_positions = np.unique(val_labels)
+    avg_predicted = []
+    positions_list = []
+    
+    for pos in unique_positions:
+        mask = val_labels == pos
+        if mask.sum() > 0:
+            avg_pred = np.mean(val_preds_ranked[mask])
+            avg_predicted.append(avg_pred)
+            positions_list.append(pos)
+    
     plt.figure(figsize=(10, 8))
-    plt.scatter(val_labels, val_preds, alpha=0.5)
-    plt.plot([val_labels.min(), val_labels.max()], [val_labels.min(), val_labels.max()], 'r--', lw=2)
+    plt.plot(positions_list, avg_predicted, 'o-', markersize=8, label='Average Predicted Rank')
+    plt.plot([val_labels.min(), val_labels.max()], [val_labels.min(), val_labels.max()], 'r--', lw=2, label='Perfect Prediction')
     plt.xlabel('Actual Position')
-    plt.ylabel('Predicted Position')
+    plt.ylabel('Average Predicted Rank (from sorted predictions, per race)')
     plt.title('Predicted vs Actual Finishing Positions (Top 10 Only)')
+    plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     scatter_path = images_dir / 'prediction_scatter_top10.png'
@@ -476,13 +572,12 @@ def main():
         test_mae = test_rmse = test_r2 = test_w1 = test_w2 = test_w3 = None
         test_mae_all = test_rmse_all = test_r2_all = test_w1_all = test_w2_all = test_w3_all = None
     
-    # Save all ensemble models (no label encoder for regression)
+    # Save model (no label encoder for regression)
     print("\n" + "=" * 60)
-    print("SAVING ENSEMBLE MODELS")
+    print("SAVING MODEL")
     print("=" * 60)
-    for i, model_to_save in enumerate(models):
-        save_model(model_to_save, scaler, None, model_index=i)
-    print(f"\nSaved {len(models)} ensemble models")
+    save_model(model, scaler, None, model_index=None)
+    print(f"\nSaved model")
     
     # Save results - convert all numpy types to native Python types for JSON serialization
     def convert_to_native(obj):

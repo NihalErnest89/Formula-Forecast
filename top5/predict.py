@@ -1,8 +1,8 @@
 """
-Inference script for F1 Predictions (Top 10 Model).
-Loads trained top 10 model (trained on positions 1-10 only) and makes predictions for race positions.
-Ranks drivers and displays predicted top 10.
-Predictions are clipped to range 1-10 to match training data.
+Inference script for F1 Predictions (Top 5 Model).
+Loads trained Top 5 model (trained on positions 1-5 only) and makes predictions for race positions.
+Ranks drivers and displays predicted Top 5.
+Predictions are clipped to range 1-5 to match training data.
 """
 
 import pickle
@@ -51,9 +51,9 @@ def handle_nan_values(X: np.ndarray) -> np.ndarray:
                 # Check if all values in this column are NaN
                 nan_mask = np.isnan(X[:, i])
                 if nan_mask.all():
-                    # All NaN - use a reasonable default (10.5 for grid position, mid-field)
+                    # All NaN - use a reasonable default (5.5 for grid position, mid-field)
                     # For other features, use 0 as default
-                    X[:, i] = 10.5 if i == 4 else 0  # AvgGridPosition (GridPosition) is typically index 4
+                    X[:, i] = 5.5 if i == 4 else 0  # AvgGridPosition (GridPosition) is typically index 4
                 else:
                     # Some NaN - fill with mean of non-NaN values
                     non_nan_values = X[~nan_mask, i]
@@ -152,69 +152,17 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
         model_dir = Path(model_dir)
     
     if model_type == 'neural_network':
-        nn_scaler_path = model_dir / 'scaler_top10.pkl'
+        nn_scaler_path = model_dir / 'scaler_top5.pkl'
         
-        # Check for single model first (preferred - new training saves single model)
-        single_model_path = model_dir / 'f1_predictor_model_top10.pth'
-        
-        if single_model_path.exists() and nn_scaler_path.exists():
-            # Load single model
-            print("Loading model...")
-            with open(nn_scaler_path, 'rb') as f:
-                scaler = pickle.load(f)
-            
-            device = torch.device('cpu')
-            
-            # Load checkpoint to determine input size from first layer weight shape
-            checkpoint = torch.load(single_model_path, map_location=device)
-            # Check the shape of the first layer weight: [hidden_size, input_size]
-            first_layer_weight_shape = checkpoint['network.0.weight'].shape
-            input_size = first_layer_weight_shape[1]  # Second dimension is input size
-            
-            model = F1NeuralNetwork(
-                input_size=input_size,
-                hidden_sizes=[128, 64, 32],
-                dropout_rate=0.4
-            ).to(device)
-            model.load_state_dict(checkpoint)
-            model.eval()
-            
-            print(f"Loaded model (input_size={input_size})")
-            
-            # Fail fast if old model detected (expects 11 features instead of 9)
-            if input_size != 9:
-                raise ValueError(
-                    f"\n{'='*70}\n"
-                    f"ERROR: Old model detected! Model expects {input_size} features, but code uses 9 features.\n"
-                    f"\nThis is an old model file. Please delete it and retrain:\n"
-                    f"  1. Delete old model files in {model_dir}:\n"
-                    f"     - f1_predictor_model_top10.pth\n"
-                    f"     - f1_predictor_model_top10_ensemble_*.pth\n"
-                    f"     - scaler_top10.pkl\n"
-                    f"  2. Retrain with: python top10/train.py\n"
-                    f"{'='*70}"
-                )
-            
-            # Verify scaler expects 9 features
-            scaler_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else None
-            if scaler_features is not None and scaler_features != 9:
-                raise ValueError(
-                    f"\n{'='*70}\n"
-                    f"ERROR: Old scaler detected! Scaler expects {scaler_features} features, but code uses 9 features.\n"
-                    f"\nThis is an old scaler file. Please delete it and retrain:\n"
-                    f"  1. Delete old scaler file: {nn_scaler_path}\n"
-                    f"  2. Retrain with: python top10/train.py\n"
-                    f"{'='*70}"
-                )
-            
-            return model, scaler, 'neural_network', device
-        
-        # Fallback: Check for ensemble models (backward compatibility - but will fail if old)
+        # Check for ensemble models first
         ensemble_models = []
         for i in range(3):
-            ensemble_path = model_dir / f'f1_predictor_model_top10_ensemble_{i}.pth'
+            ensemble_path = model_dir / f'f1_predictor_model_top5_ensemble_{i}.pth'
             if ensemble_path.exists():
                 ensemble_models.append(ensemble_path)
+        
+        # Check for single model
+        single_model_path = model_dir / 'f1_predictor_model_top5.pth'
         
         if len(ensemble_models) == 3 and nn_scaler_path.exists():
             # Load ensemble models
@@ -222,63 +170,47 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
             with open(nn_scaler_path, 'rb') as f:
                 scaler = pickle.load(f)
             
+            input_size = getattr(scaler, 'n_features_in_', 7)
             device = torch.device('cpu')
             models = []
             
             for i, model_path in enumerate(ensemble_models):
-                # Load checkpoint to determine input size from first layer weight shape
-                checkpoint = torch.load(model_path, map_location=device)
-                # Check the shape of the first layer weight: [hidden_size, input_size]
-                first_layer_weight_shape = checkpoint['network.0.weight'].shape
-                input_size = first_layer_weight_shape[1]  # Second dimension is input size
-                
                 model = F1NeuralNetwork(
                     input_size=input_size,
                     hidden_sizes=[128, 64, 32],
                     dropout_rate=0.4
                 ).to(device)
-                model.load_state_dict(checkpoint)
+                model.load_state_dict(torch.load(model_path, map_location=device))
                 model.eval()
                 models.append(model)
-                print(f"  Loaded ensemble model {i+1}/3 (input_size={input_size})")
+                print(f"  Loaded ensemble model {i+1}/3")
             
             print("Ensemble models loaded successfully")
-            
-            # Fail fast if old models detected (expect 11 features instead of 9)
-            for i, m in enumerate(models):
-                model_input_size = m.network[0].weight.shape[1]
-                if model_input_size != 9:
-                    raise ValueError(
-                        f"\n{'='*70}\n"
-                        f"ERROR: Old ensemble model {i+1} detected! Model expects {model_input_size} features, but code uses 9 features.\n"
-                        f"\nThese are old model files. Please delete them and retrain:\n"
-                        f"  1. Delete old model files in {model_dir}:\n"
-                        f"     - f1_predictor_model_top10_ensemble_*.pth\n"
-                        f"     - scaler_top10.pkl\n"
-                        f"  2. Retrain with: python top10/train.py\n"
-                        f"{'='*70}"
-                    )
-            
-            # Verify scaler expects 9 features
-            scaler_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else None
-            if scaler_features is not None and scaler_features != 9:
-                raise ValueError(
-                    f"\n{'='*70}\n"
-                    f"ERROR: Old scaler detected! Scaler expects {scaler_features} features, but code uses 9 features.\n"
-                    f"\nThis is an old scaler file. Please delete it and retrain:\n"
-                    f"  1. Delete old scaler file: {nn_scaler_path}\n"
-                    f"  2. Retrain with: python top10/train.py\n"
-                    f"{'='*70}"
-                )
-            
             return models, scaler, 'neural_network', device
+            
+        elif single_model_path.exists() and nn_scaler_path.exists():
+            # Load single model (backward compatibility)
+            with open(nn_scaler_path, 'rb') as f:
+                scaler = pickle.load(f)
+            
+            input_size = getattr(scaler, 'n_features_in_', 7)
+            device = torch.device('cpu')
+            model = F1NeuralNetwork(
+                input_size=input_size,
+                hidden_sizes=[128, 64, 32],
+                dropout_rate=0.4
+            ).to(device)
+            model.load_state_dict(torch.load(single_model_path, map_location=device))
+            model.eval()
+            
+            return model, scaler, 'neural_network', device
         elif auto_fallback:
             # Try Random Forest as fallback
             print(f"Warning: Neural network model not found")
             print("Attempting to load Random Forest model instead...")
             model_type = 'random_forest'  # Switch to try RF
         else:
-            raise FileNotFoundError(f"Model not found. Run top10/train.py first.")
+            raise FileNotFoundError(f"Model not found. Run top5/train.py first.")
     
     # Try Random Forest (either requested or as fallback)
     if model_type == 'random_forest':
@@ -296,10 +228,10 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
         elif auto_fallback:
             raise FileNotFoundError(
                 f"Neither model found!\n"
-                f"  Neural Network: {model_dir / 'f1_predictor_model_top10.pth'} (not found)\n"
+                f"  Neural Network: {model_dir / 'f1_predictor_model_top5.pth'} (not found)\n"
                 f"  Random Forest: {rf_model_path} (not found)\n"
                 f"Please train at least one model:\n"
-                f"  python top10/train.py (for neural network)\n"
+                f"  python top5/train.py (for neural network)\n"
                 f"  python train_rf.py (for random forest)"
             )
         else:
@@ -336,7 +268,7 @@ def predict_position(season_points: float, season_avg_finish: float,
         Predicted finishing position (1-20)
     """
     # Use 8 features (ConstructorTrackAvg added)
-    # Note: This function is deprecated - use predict_race_top10 instead
+    # Note: This function is deprecated - use predict_race_top5 instead
     if recent_form is None:
         recent_form = np.nan  # Use NaN if not provided
     track_type = 0.0  # Default to permanent circuit if not provided
@@ -358,16 +290,16 @@ def predict_position(season_points: float, season_avg_finish: float,
         # Random Forest prediction
         predicted_position = model.predict(features_scaled)[0]
     
-    # Ensure position is within valid range (1-10, matching top 10 training data)
-    predicted_position = max(1, min(10, predicted_position))
+    # Ensure position is within valid range (1-5, matching Top 5 training data)
+    predicted_position = max(1, min(5, predicted_position))
     
     return predicted_position
 
 
-def predict_race_top10(drivers_df: pd.DataFrame, model, scaler, 
+def predict_race_top5(drivers_df: pd.DataFrame, model, scaler, 
                        model_type='neural_network', device=None):
     """
-    Predict positions for all drivers in a race and return top 10.
+    Predict positions for all drivers in a race and return Top 5.
     
     Args:
         drivers_df: DataFrame with one row per driver, containing:
@@ -379,8 +311,11 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
         device: Device for neural network inference
         
     Returns:
-        DataFrame with predicted positions, sorted to show top 10
+        DataFrame with predicted positions, sorted to show Top 5
     """
+    # Get expected feature count from scaler
+    expected_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else len(FEATURE_COLS)
+    
     # Base 9 features (current feature set)
     base_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
                      'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']
@@ -394,32 +329,29 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     X = drivers_df[base_features].values
     X = handle_nan_values(X)
     
-    # Verify we have 9 features
-    if X.shape[1] != 9:
-        raise ValueError(f"Expected 9 features, but got {X.shape[1]} features")
+    # Handle feature count mismatch: if model expects more features than we have,
+    # add zero columns for backward compatibility with older models
+    # (Current models use 9 features, older models may have used 11)
+    if X.shape[1] < expected_features:
+        num_missing = expected_features - X.shape[1]
+        # Add zero columns for missing features (for backward compatibility)
+        missing_features = np.zeros((X.shape[0], num_missing))
+        X = np.hstack([X, missing_features])
+        print(f"  Note: Model expects {expected_features} features, added {num_missing} zero columns for backward compatibility")
+    elif X.shape[1] > expected_features:
+        raise ValueError(
+            f"Feature count mismatch: Model expects {expected_features} features, but data has {X.shape[1]} features.\n"
+            f"Expected features: {base_features}\n"
+            f"This usually means the model was trained with a different feature set.\n"
+            f"Please retrain the model by running: python top5/train.py"
+        )
     
-    # Scale features
     X_scaled = scaler.transform(X)
     
-    # Verify model expects 9 features (fail fast if old model detected)
-    if model_type == 'neural_network':
-        if isinstance(model, list):
-            model_to_check = model[0]
-        else:
-            model_to_check = model
-        model_expected_features = model_to_check.network[0].weight.shape[1]
-        if model_expected_features != 9:
-            raise ValueError(
-                f"\n{'='*70}\n"
-                f"ERROR: Old model detected! Model expects {model_expected_features} features, but code uses 9 features.\n"
-                f"\nThis is an old model file. Please delete it and retrain:\n"
-                f"  1. Delete old model files in models/ directory:\n"
-                f"     - f1_predictor_model_top10.pth\n"
-                f"     - f1_predictor_model_top10_ensemble_*.pth\n"
-                f"     - scaler_top10.pkl\n"
-                f"  2. Retrain with: python top10/train.py\n"
-                f"{'='*70}"
-            )
+    # Debug: Check if we're using an old model with wrong feature count
+    if X.shape[1] < expected_features:
+        print(f"  WARNING: Using old model with {expected_features} features, but only {X.shape[1]} provided.")
+        print(f"  This may cause incorrect predictions. Please retrain with: python top5/train.py")
     
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
     
@@ -433,23 +365,22 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     # Add rank
     result_df['Rank'] = range(1, len(result_df) + 1)
     
-    # Return top 10
-    top10 = result_df.head(10).copy()
+    # Return Top 5
+    top5 = result_df.head(5).copy()
     
-    return top10, result_df
+    return top5, result_df
 
 
-def calculate_filtered_accuracy(predicted_scores: list, actual: list, grid_positions: list, 
+def calculate_filtered_accuracy(predicted: list, actual: list, grid_positions: list, 
                                 outlier_threshold: int = 6) -> dict:
     """
     Calculate accuracy metrics with and without outliers (large position drops).
     
     Filters out cases where actual finish > grid + threshold (same as training filter).
     This shows how accuracy would be if we excluded unpredictable large drops.
-    After filtering, re-ranks the remaining predictions and compares to actual positions.
     
     Args:
-        predicted_scores: List of raw predicted scores (lower = better, will be ranked)
+        predicted: List of predicted positions
         actual: List of actual positions
         grid_positions: List of grid positions (AvgGridPosition)
         outlier_threshold: Threshold for large position drops (default: 6)
@@ -457,7 +388,7 @@ def calculate_filtered_accuracy(predicted_scores: list, actual: list, grid_posit
     Returns:
         Dictionary with 'full' and 'filtered' accuracy metrics
     """
-    predicted_scores = np.array(predicted_scores)
+    predicted = np.array(predicted)
     actual = np.array(actual)
     grid_positions = np.array(grid_positions)
     
@@ -467,30 +398,19 @@ def calculate_filtered_accuracy(predicted_scores: list, actual: list, grid_posit
     # Filter mask: exclude cases where finish > grid + threshold
     valid_mask = position_drops <= outlier_threshold
     
-    # Full accuracy: rank all predictions and compare to actual
-    # Lower predicted score = better rank (rank 1 is best)
-    predicted_ranks_full = np.argsort(np.argsort(predicted_scores)) + 1
-    errors_full = np.abs(predicted_ranks_full - actual)
+    # Full accuracy (all predictions)
+    errors_full = np.abs(predicted - actual)
     mae_full = np.mean(errors_full)
-    exact_full = np.mean(predicted_ranks_full == actual) * 100
+    exact_full = np.mean(np.round(predicted) == actual) * 100
     within_1_full = np.mean(errors_full <= 1) * 100
     within_2_full = np.mean(errors_full <= 2) * 100
     within_3_full = np.mean(errors_full <= 3) * 100
     
     # Filtered accuracy (excluding outliers)
     if valid_mask.sum() > 0:
-        # Get filtered predictions and actuals
-        predicted_scores_filtered = predicted_scores[valid_mask]
-        actual_filtered = actual[valid_mask]
-        
-        # Re-rank the filtered predictions (assign ranks 1, 2, 3, ... based on predicted scores)
-        # Lower predicted score = better rank (rank 1 is best)
-        predicted_ranks_filtered = np.argsort(np.argsort(predicted_scores_filtered)) + 1
-        
-        # Compare re-ranked predictions to actual positions
-        errors_filtered = np.abs(predicted_ranks_filtered - actual_filtered)
+        errors_filtered = np.abs(predicted[valid_mask] - actual[valid_mask])
         mae_filtered = np.mean(errors_filtered)
-        exact_filtered = np.mean(predicted_ranks_filtered == actual_filtered) * 100
+        exact_filtered = np.mean(np.round(predicted[valid_mask]) == actual[valid_mask]) * 100
         within_1_filtered = np.mean(errors_filtered <= 1) * 100
         within_2_filtered = np.mean(errors_filtered <= 2) * 100
         within_3_filtered = np.mean(errors_filtered <= 3) * 100
@@ -539,6 +459,9 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     Returns:
         DataFrame with predictions added
     """
+    # Get expected feature count from scaler
+    expected_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else len(FEATURE_COLS)
+    
     # Base 9 features (current feature set)
     base_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
                      'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']
@@ -552,33 +475,23 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     X = df[base_features].values
     X = handle_nan_values(X)
     
-    # Verify we have 9 features
-    if X.shape[1] != 9:
-        raise ValueError(f"Expected 9 features, but got {X.shape[1]} features")
+    # Handle feature count mismatch: if model expects more features than we have,
+    # add zero columns for backward compatibility with older models
+    # (Current models use 9 features, older models may have used 11)
+    if X.shape[1] < expected_features:
+        num_missing = expected_features - X.shape[1]
+        # Add zero columns for missing features (for backward compatibility)
+        missing_features = np.zeros((X.shape[0], num_missing))
+        X = np.hstack([X, missing_features])
+    elif X.shape[1] > expected_features:
+        raise ValueError(
+            f"Feature count mismatch: Model expects {expected_features} features, but data has {X.shape[1]} features.\n"
+            f"Expected features: {base_features}\n"
+            f"This usually means the model was trained with a different feature set.\n"
+            f"Please retrain the model by running: python top5/train.py"
+        )
     
-    # Scale features
     X_scaled = scaler.transform(X)
-    
-    # Verify model expects 9 features (fail fast if old model detected)
-    if model_type == 'neural_network':
-        if isinstance(model, list):
-            model_to_check = model[0]
-        else:
-            model_to_check = model
-        model_expected_features = model_to_check.network[0].weight.shape[1]
-        if model_expected_features != 9:
-            raise ValueError(
-                f"\n{'='*70}\n"
-                f"ERROR: Old model detected! Model expects {model_expected_features} features, but code uses 9 features.\n"
-                f"\nThis is an old model file. Please delete it and retrain:\n"
-                f"  1. Delete old model files in models/ directory:\n"
-                f"     - f1_predictor_model_top10.pth\n"
-                f"     - f1_predictor_model_top10_ensemble_*.pth\n"
-                f"     - scaler_top10.pkl\n"
-                f"  2. Retrain with: python top10/train.py\n"
-                f"{'='*70}"
-            )
-    
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
     
     # Add predictions to DataFrame
@@ -648,22 +561,9 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
         if len(valid_positions) > 0:
             track_avg_by_driver[str(driver_num)] = valid_positions.mean()
         else:
-            # Fallback: use driver's overall average from historical data
-            driver_all_races = historical_df[historical_df['DriverNumber'] == driver_num]
-            if not driver_all_races.empty:
-                if 'ActualPosition' in driver_all_races.columns:
-                    valid_positions = driver_all_races['ActualPosition'].dropna()
-                elif 'Position' in driver_all_races.columns:
-                    valid_positions = driver_all_races['Position'].dropna()
-                else:
-                    valid_positions = pd.Series()
-                
-                if len(valid_positions) > 0:
-                    track_avg_by_driver[str(driver_num)] = valid_positions.mean()
-                else:
-                    track_avg_by_driver[str(driver_num)] = 10.0  # Default for rookies
-            else:
-                track_avg_by_driver[str(driver_num)] = 10.0  # Default for rookies
+            # No track-specific data - default to 10.0 for rookies at this track
+            # Don't use overall average, as it may not be representative for this specific track
+            track_avg_by_driver[str(driver_num)] = 10.0  # Default for rookies
         
         # Calculate average grid position for this driver (season-specific: only from current season)
         # Filter to only current season races before current round
@@ -854,55 +754,94 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             print(f"  Warning: No completed races or Points column for driver {driver_num}, using default standing 10")
         
         # Calculate ConstructorTrackAvg: Constructor's average finish at this specific track
-        # CRITICAL: Always use TeamName, never fall back to ConstructorStanding (unreliable)
-        # Ensure team_name is set from most recent race
-        if not team_name or not team_name.strip():
-            # Try to get from most recent completed race
-            if not driver_completed_races.empty and 'TeamName' in driver_completed_races.columns:
-                driver_races_sorted = driver_completed_races.sort_values('RoundNumber', ascending=False)
-                valid_team_names = driver_races_sorted['TeamName'].dropna()
-                if not valid_team_names.empty:
-                    team_name = str(valid_team_names.iloc[0]).strip()
-        
+        # IMPORTANT: Use the team the driver had at EACH SPECIFIC RACE, not their current team
+        # This ensures historical races use the correct team context (e.g., if driver switched teams mid-season)
         combined_historical = historical_df.copy()
         if not completed_races.empty:
             combined_historical = pd.concat([historical_df, completed_races], ignore_index=True)
         
-        # Always use current team's track average (team_name should be set from most recent race)
-        constructor_track_avg = 10.0  # Default
-        if team_name and team_name.strip() and 'TeamName' in combined_historical.columns:
-            constructor_track_races = combined_historical[
-                (combined_historical['EventName'] == track_name) &
-                (combined_historical['TeamName'] == team_name) &
-                ((combined_historical['Year'] < selected_year) | 
-                 ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
-            ]
+        # Get all races at this track by this driver, then use the team from each specific race
+        driver_track_races = combined_historical[
+            (combined_historical['EventName'] == track_name) &
+            (combined_historical['DriverNumber'] == driver_num) &
+            ((combined_historical['Year'] < selected_year) | 
+             ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
+        ]
+        
+        if not driver_track_races.empty and 'TeamName' in driver_track_races.columns:
+            # Get unique teams this driver raced with at this track
+            driver_teams_at_track = driver_track_races['TeamName'].dropna().unique()
+            
+            # For each team, get all races at this track by that team (by any driver from that team)
+            # This gives us the constructor's track average, using the team context from each race
+            all_constructor_positions = []
+            for team_at_race in driver_teams_at_track:
+                if pd.notna(team_at_race) and str(team_at_race).strip():
+                    team_track_races = combined_historical[
+                        (combined_historical['EventName'] == track_name) &
+                        (combined_historical['TeamName'] == team_at_race) &
+                        ((combined_historical['Year'] < selected_year) | 
+                         ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
+                    ]
+                    if not team_track_races.empty:
+                        pos_col = 'ActualPosition' if 'ActualPosition' in team_track_races.columns else 'Position'
+                        if pos_col in team_track_races.columns:
+                            positions = team_track_races[pos_col].dropna()
+                            all_constructor_positions.extend(positions.tolist())
+            
+            if len(all_constructor_positions) > 0:
+                constructor_track_avg = np.mean(all_constructor_positions)
+            else:
+                # Fallback: use current team's track average
+                if team_name and 'TeamName' in combined_historical.columns:
+                    constructor_track_races = combined_historical[
+                        (combined_historical['EventName'] == track_name) &
+                        (combined_historical['TeamName'] == team_name) &
+                        ((combined_historical['Year'] < selected_year) | 
+                         ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
+                    ]
+                    if not constructor_track_races.empty:
+                        pos_col = 'ActualPosition' if 'ActualPosition' in constructor_track_races.columns else 'Position'
+                        if pos_col in constructor_track_races.columns:
+                            positions = constructor_track_races[pos_col].dropna()
+                            constructor_track_avg = positions.mean() if len(positions) > 0 else 5.0
+                        else:
+                            constructor_track_avg = 10.0
+                    else:
+                        constructor_track_avg = 10.0
+                else:
+                    constructor_track_avg = 10.0
+        else:
+            # No driver history at this track - use current team's track average
+            if team_name and 'TeamName' in combined_historical.columns:
+                constructor_track_races = combined_historical[
+                    (combined_historical['EventName'] == track_name) &
+                    (combined_historical['TeamName'] == team_name) &
+                    ((combined_historical['Year'] < selected_year) | 
+                     ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
+                ]
+            else:
+                # Fallback: use constructor standing if TeamName not available
+                constructor_track_races = combined_historical[
+                    (combined_historical['EventName'] == track_name) &
+                    (combined_historical['ConstructorStanding'] == constructor_standing) &
+                    ((combined_historical['Year'] < selected_year) | 
+                     ((combined_historical['Year'] == selected_year) & (combined_historical['RoundNumber'] < selected_round)))
+                ]
             
             if not constructor_track_races.empty:
                 pos_col = 'ActualPosition' if 'ActualPosition' in constructor_track_races.columns else 'Position'
                 if pos_col in constructor_track_races.columns:
                     positions = constructor_track_races[pos_col].dropna()
-                    if len(positions) > 0:
-                        constructor_track_avg = positions.mean()
-                    else:
-                        constructor_track_avg = 10.0
+                    constructor_track_avg = positions.mean() if len(positions) > 0 else 5.0
                 else:
                     constructor_track_avg = 10.0
             else:
-                # Debug: team has no history at this track (only warn if team_name was set)
-                if team_name and team_name.strip() and driver_name:
-                    print(f"    DEBUG: {driver_name} ({driver_num}): Team={team_name} has no history at {track_name}, using default 10.0")
                 constructor_track_avg = 10.0
-        else:
-            # Debug: team_name not available (this is a problem - should always be set)
-            if driver_name:
-                print(f"    WARNING: {driver_name} ({driver_num}): TeamName not available (team_name='{team_name}'), using default 10.0")
-            constructor_track_avg = 10.0
         
         # Get track-specific historical average for this driver at this track
         # Default to 10.0 for rookies/drivers with no historical data
-        hist_track_avg = track_avg_by_driver.get(str(driver_num), 
-                                                  driver_row.get('HistoricalTrackAvgPosition', 10.0))
+        hist_track_avg = track_avg_by_driver.get(str(driver_num), 10.0)
         if pd.isna(hist_track_avg):
             hist_track_avg = 10.0
         
@@ -923,7 +862,7 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
                     if len(valid_grid) > 0:
                         driver_grid_avg = valid_grid.mean()
         
-        # Ensure we always have a valid AvgGridPosition (default to 10.5 = mid-field if no history)
+        # Ensure we always have a valid AvgGridPosition (default to 5.5 = mid-field if no history)
         if pd.isna(driver_grid_avg):
             driver_grid_avg = 10.5  # Mid-field default for drivers with no grid history
         
@@ -946,7 +885,7 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             'ConstructorPoints': constructor_points,
             'ConstructorStanding': constructor_standing,
             'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
-            'GridPosition': driver_grid_avg if not pd.isna(driver_grid_avg) else 10.5,  # AvgGridPosition: driver's season-specific average grid position (default 10.5 if no history)
+            'GridPosition': driver_grid_avg if not pd.isna(driver_grid_avg) else 5.5,  # AvgGridPosition: driver's season-specific average grid position (default 5.5 if no history)
             'RecentForm': recent_form,  # Calculated from last 5 completed races
             'TrackType': track_type,  # Street circuit (1) or permanent (0)
             'DriverNumber': driver_num,
@@ -955,15 +894,6 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             'ActualPosition': np.nan  # Future race, no actual position
         }
         future_race_features.append(features)
-    
-    # Debug: Show team assignments for ConstructorTrackAvg verification
-    print(f"\n  DEBUG: Team assignments for ConstructorTrackAvg calculation:")
-    for feat in future_race_features:
-        driver_name = feat.get('DriverName', 'Unknown')
-        driver_num = feat.get('DriverNumber', 'Unknown')
-        team = feat.get('TeamName', 'Unknown')
-        constr_track_avg = feat.get('ConstructorTrackAvg', 10.0)
-        print(f"    {driver_name} ({driver_num}): Team={team}, ConstructorTrackAvg={constr_track_avg:.2f}")
     
     return pd.DataFrame(future_race_features)
 
@@ -1139,54 +1069,88 @@ def recalculate_features_from_state(race_df: pd.DataFrame, previous_state_df: pd
             if pd.isna(row.get('GridPosition', np.nan)) and not pd.isna(prev_row.get('GridPosition', np.nan)):
                 updated_df.at[idx, 'GridPosition'] = prev_row.get('GridPosition')
             elif pd.isna(row.get('GridPosition', np.nan)):
-                updated_df.at[idx, 'GridPosition'] = 10.5  # Default if still missing
+                updated_df.at[idx, 'GridPosition'] = 5.5  # Default if still missing
             
-            # HistoricalTrackAvgPosition - use track-specific if available
-            hist_track_avg = track_avg_by_driver.get(str(driver_num), prev_row.get('HistoricalTrackAvgPosition', 10.0))
+            # HistoricalTrackAvgPosition - use track-specific if available, default to 10.0 for rookies
+            hist_track_avg = track_avg_by_driver.get(str(driver_num), 10.0)
             if pd.isna(hist_track_avg):
                 hist_track_avg = 10.0
             updated_df.at[idx, 'HistoricalTrackAvgPosition'] = hist_track_avg
             
             # ConstructorTrackAvg - calculate constructor's average at this track
-            # CRITICAL: Always use TeamName, never fall back to ConstructorStanding (unreliable)
-            # Ensure team_name is set from most recent race or previous state
-            if not team_name or not team_name.strip():
-                # Try to get from previous state
-                if 'TeamName' in prev_row and pd.notna(prev_row.get('TeamName')):
-                    team_name = str(prev_row['TeamName']).strip()
-                elif 'TeamName' in row and pd.notna(row.get('TeamName')):
-                    team_name = str(row['TeamName']).strip()
-            
-            constructor_track_avg = 10.0  # Default
-            if team_name and team_name.strip() and historical_df is not None and 'TeamName' in historical_df.columns:
-                constructor_track_races = historical_df[
+            # IMPORTANT: Use the team the driver had at EACH SPECIFIC RACE, not their current team
+            # This ensures historical races use the correct team context
+            if historical_df is not None:
+                # Get all races at this track by this driver, then use the team from each specific race
+                driver_track_races = historical_df[
                     (historical_df['EventName'] == track_name) &
-                    (historical_df['TeamName'] == team_name)
+                    (historical_df['DriverNumber'] == driver_num)
                 ]
                 
-                if not constructor_track_races.empty:
-                    pos_col = 'ActualPosition' if 'ActualPosition' in constructor_track_races.columns else 'Position'
-                    if pos_col in constructor_track_races.columns:
-                        positions = constructor_track_races[pos_col].dropna()
-                        if len(positions) > 0:
-                            constructor_track_avg = positions.mean()
-                        else:
-                            constructor_track_avg = 10.0
+                if not driver_track_races.empty and 'TeamName' in driver_track_races.columns:
+                    # Get unique teams this driver raced with at this track
+                    driver_teams_at_track = driver_track_races['TeamName'].dropna().unique()
+                    
+                    # For each team, get all races at this track by that team (by any driver from that team)
+                    all_constructor_positions = []
+                    for team_at_race in driver_teams_at_track:
+                        if pd.notna(team_at_race) and str(team_at_race).strip():
+                            team_track_races = historical_df[
+                                (historical_df['EventName'] == track_name) &
+                                (historical_df['TeamName'] == team_at_race)
+                            ]
+                            if not team_track_races.empty:
+                                pos_col = 'ActualPosition' if 'ActualPosition' in team_track_races.columns else 'Position'
+                                if pos_col in team_track_races.columns:
+                                    positions = team_track_races[pos_col].dropna()
+                                    all_constructor_positions.extend(positions.tolist())
+                    
+                    if len(all_constructor_positions) > 0:
+                        updated_df.at[idx, 'ConstructorTrackAvg'] = np.mean(all_constructor_positions)
                     else:
-                        constructor_track_avg = 10.0
+                        # Fallback: use current team's track average
+                        if team_name and 'TeamName' in historical_df.columns:
+                            constructor_track_races = historical_df[
+                                (historical_df['EventName'] == track_name) &
+                                (historical_df['TeamName'] == team_name)
+                            ]
+                            if not constructor_track_races.empty:
+                                pos_col = 'ActualPosition' if 'ActualPosition' in constructor_track_races.columns else 'Position'
+                                if pos_col in constructor_track_races.columns:
+                                    positions = constructor_track_races[pos_col].dropna()
+                                    updated_df.at[idx, 'ConstructorTrackAvg'] = positions.mean() if len(positions) > 0 else 5.0
+                                else:
+                                    updated_df.at[idx, 'ConstructorTrackAvg'] = 10.0
+                            else:
+                                updated_df.at[idx, 'ConstructorTrackAvg'] = 10.0
+                        else:
+                            updated_df.at[idx, 'ConstructorTrackAvg'] = 10.0
                 else:
-                    # Debug: team has no history at this track (only warn if team_name was set)
-                    if team_name and team_name.strip():
-                        driver_name = row.get('DriverName', f"Driver {driver_num}")
-                        print(f"    DEBUG: {driver_name} ({driver_num}): Team={team_name} has no history at {track_name}, using default 10.0")
-                    constructor_track_avg = 10.0
+                    # No driver history at this track - use current team's track average
+                    if team_name and 'TeamName' in historical_df.columns:
+                        constructor_track_races = historical_df[
+                            (historical_df['EventName'] == track_name) &
+                            (historical_df['TeamName'] == team_name)
+                        ]
+                    else:
+                        # Fallback: use constructor standing
+                        constructor_track_races = historical_df[
+                            (historical_df['EventName'] == track_name) &
+                            (historical_df['ConstructorStanding'] == constructor_standing)
+                        ]
+                    
+                    if not constructor_track_races.empty:
+                        pos_col = 'ActualPosition' if 'ActualPosition' in constructor_track_races.columns else 'Position'
+                        if pos_col in constructor_track_races.columns:
+                            positions = constructor_track_races[pos_col].dropna()
+                            updated_df.at[idx, 'ConstructorTrackAvg'] = positions.mean() if len(positions) > 0 else 5.0
+                        else:
+                            updated_df.at[idx, 'ConstructorTrackAvg'] = 10.0
+                    else:
+                        updated_df.at[idx, 'ConstructorTrackAvg'] = 10.0
             else:
-                # Debug: team_name not available (this is a problem - should always be set)
-                driver_name = row.get('DriverName', f"Driver {driver_num}")
-                print(f"    WARNING: {driver_name} ({driver_num}): TeamName not available (team_name='{team_name}'), using default 10.0")
-                constructor_track_avg = 10.0
-            
-            updated_df.at[idx, 'ConstructorTrackAvg'] = constructor_track_avg
+                # No historical data, use default
+                updated_df.at[idx, 'ConstructorTrackAvg'] = prev_row.get('ConstructorTrackAvg', 10.0)
             
             # Update TrackType (track-specific feature)
             updated_df.at[idx, 'TrackType'] = track_type
@@ -1671,14 +1635,14 @@ def select_race_interactive(test_df: pd.DataFrame, training_df: pd.DataFrame = N
 
 def main():
     """Main function for making predictions."""
-    parser = argparse.ArgumentParser(description='F1 Race Position Prediction (Top 10 Model) - Top 10')
+    parser = argparse.ArgumentParser(description='F1 Race Position Prediction (Top 5 Model) - Top 5')
     parser.add_argument('--input-file', type=str, help='CSV file with driver features for a race')
     parser.add_argument('--output-file', type=str, default='predictions.csv', help='Output file for predictions')
     parser.add_argument('--model-dir', type=str, default='models', help='Directory containing model files')
     parser.add_argument('--model-type', type=str, default='neural_network', 
                        choices=['neural_network', 'random_forest'],
                        help='Type of model to use (neural_network or random_forest)')
-    parser.add_argument('--show-all', action='store_true', help='Show all drivers, not just top 10')
+    parser.add_argument('--show-all', action='store_true', help='Show all drivers, not just Top 5')
     parser.add_argument('--race-name', type=str, help='Specific race name to predict (e.g., "Sao Paulo", "Brazil GP"). Default: Sao Paulo GP 2025. If not found, uses most recent race.')
     parser.add_argument('--interactive', action='store_true', help='Interactive mode: select year and race from available options')
     
@@ -1695,14 +1659,13 @@ def main():
         model, scaler, model_type, device = load_model(args.model_dir, args.model_type)
         print(f"Model loaded successfully! ({model_type})")
         print(f"Using device: {device}")
-    except (FileNotFoundError, ValueError) as e:
+    except FileNotFoundError as e:
         print(f"Error: {e}")
-        if isinstance(e, FileNotFoundError):
-            print(f"\nMake sure you've trained the model first:")
-            if args.model_type == 'neural_network':
-                print("  python top10/train.py")
-            else:
-                print("  python top10/train_rf.py")
+        print(f"\nMake sure you've trained the model first:")
+        if args.model_type == 'neural_network':
+            print("  python train.py")
+        else:
+            print("  python train_rf.py")
         return
     
     # Make predictions
@@ -1901,7 +1864,7 @@ def main():
                                             race_df.at[idx, 'HistoricalTrackAvgPosition'] = valid_positions.mean()
                     
                     try:
-                        top10, all_results = predict_race_top10(race_df, model, scaler, model_type, device)
+                        top5, all_results = predict_race_top5(race_df, model, scaler, model_type, device)
                         
                         # Check if this is a future race (no actual positions available)
                         race_is_future_check = 'ActualPosition' not in all_results.columns or all_results['ActualPosition'].isna().all()
@@ -1963,16 +1926,16 @@ def main():
                                         all_results.at[idx, 'SeasonAvgFinish'] = state_row.get('SeasonAvgFinish', row.get('SeasonAvgFinish', np.nan))
                                         all_results.at[idx, 'RecentForm'] = state_row.get('RecentForm', row.get('RecentForm', np.nan))
                             
-                            # Update top10 with the updated features
-                            for idx, row in top10.iterrows():
+                            # Update top5 with the updated features
+                            for idx, row in top5.iterrows():
                                 driver_num = row.get('DriverNumber')
                                 if driver_num is not None:
                                     state_row = current_state_df[current_state_df['DriverNumber'] == driver_num]
                                     if not state_row.empty:
                                         state_row = state_row.iloc[0]
-                                        top10.at[idx, 'SeasonPoints'] = state_row.get('SeasonPoints', row.get('SeasonPoints', 0))
-                                        top10.at[idx, 'SeasonAvgFinish'] = state_row.get('SeasonAvgFinish', row.get('SeasonAvgFinish', np.nan))
-                                        top10.at[idx, 'RecentForm'] = state_row.get('RecentForm', row.get('RecentForm', np.nan))
+                                        top5.at[idx, 'SeasonPoints'] = state_row.get('SeasonPoints', row.get('SeasonPoints', 0))
+                                        top5.at[idx, 'SeasonAvgFinish'] = state_row.get('SeasonAvgFinish', row.get('SeasonAvgFinish', np.nan))
+                                        top5.at[idx, 'RecentForm'] = state_row.get('RecentForm', row.get('RecentForm', np.nan))
                         
                         # Display ranking accuracy analysis table (for "all" mode)
                         if not race_is_future_check and 'ActualPosition' in all_results.columns:
@@ -1981,7 +1944,7 @@ def main():
                             print(f"{'='*70}")
                             print(f"Comparing: Predicted Score vs Actual Finishing Position (1-20)")
                             print()
-                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGridPos':<10} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
                             print("-" * 130)
                             
                             # Collect data for accuracy calculation
@@ -1989,7 +1952,7 @@ def main():
                             actual_list = []
                             grid_list = []
                             
-                            for _, row in top10.iterrows():
+                            for _, row in top5.iterrows():
                                 if not pd.isna(row.get('ActualPosition')):
                                     pred_rank = row['Rank']
                                     pred_score = row.get('PredictedPosition', pred_rank)
@@ -2005,8 +1968,8 @@ def main():
                                     driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
                                     status = get_status(error)
                                     
-                                    # Collect for accuracy calculation (use raw predicted scores, not ranks)
-                                    predicted_list.append(pred_score)
+                                    # Collect for accuracy calculation
+                                    predicted_list.append(pred_rank)
                                     actual_list.append(actual_pos)
                                     grid_list.append(grid_pos_float)
                                     
@@ -2031,7 +1994,7 @@ def main():
                                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
                                     track_type_str = "Street" if track_type == 1 else "Permanent"
                                     
-                                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
+                                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {grid_pos:<8} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
                             
                             # Calculate and display filtered accuracy
                             if predicted_list:
@@ -2061,18 +2024,18 @@ def main():
                             print("-" * 120)
                         else:
                             # Future race - show table with all features
-                            print(f"\nPREDICTED TOP 10 FINISHERS")
+                            print(f"\nPREDICTED Top 5 FINISHERS")
                             print("-" * 120)
                             print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'AvgGridPos':<10} {'Form':<7} {'TrackType':<9}")
                             print("-" * 130)
                             
-                            for _, row in top10.iterrows():
+                            for _, row in top5.iterrows():
                                 driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
                                 rank = row['Rank']
                                 pred_pos = row['PredictedPosition']
                                 season_pts = row.get('SeasonPoints', 0)
                                 season_avg = row.get('SeasonAvgFinish', 0)
-                                track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                                track_avg = row.get('HistoricalTrackAvgPosition', 5.0)
                                 if pd.isna(track_avg):
                                     track_avg = 10.0
                                 constr_st = row.get('ConstructorStanding', 0)
@@ -2095,9 +2058,9 @@ def main():
                                 print(f"{rank:<6} {driver_name:<12} {pred_pos:<6.3f} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {grid_pos_str:<8} {recent_form_str:<7} {track_type_str:<9}")
                         
                         # Store predictions
-                        top10_copy = top10.copy()
-                        top10_copy['Race'] = race_input_source
-                        all_predictions.append(top10_copy)
+                        top5_copy = top5.copy()
+                        top5_copy['Race'] = race_input_source
+                        all_predictions.append(top5_copy)
                         
                         # Note: State was already updated above before displaying results
                         # Filtered accuracy already displayed above, no need for duplicate Summary/Ranking Accuracy
@@ -2130,16 +2093,16 @@ def main():
                 print(f"\nSelected race: {input_source}")
                 print(f"  Found {len(df)} drivers")
     
-    # Predict positions and get top 10
+    # Predict positions and get Top 5
     try:
-        top10, all_results = predict_race_top10(df, model, scaler, model_type, device)
+        top5, all_results = predict_race_top5(df, model, scaler, model_type, device)
         
         # Check if this is a future race (no actual positions available)
         is_future_race = 'ActualPosition' not in all_results.columns or all_results['ActualPosition'].isna().all()
         
-        # Display top 10
+        # Display Top 5
         print("\n" + "=" * 70)
-        print(f"PREDICTED TOP 10 FINISHERS ({input_source})")
+        print(f"PREDICTED Top 5 FINISHERS ({input_source})")
         print("=" * 70)
         if not is_future_race and 'ActualPosition' in all_results.columns:
             print(f"{'Rank':<6} {'Driver':<20} {'Driver #':<10} {'Predicted':<12} {'Actual':<10} {'AvgGrid':<10} {'Status':<10}")
@@ -2148,7 +2111,7 @@ def main():
             print(f"{'Rank':<6} {'Driver':<12} {'Pred':<6} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'AvgGridPos':<10} {'Form':<7} {'TrackType':<9}")
         print("-" * 130 if is_future_race else "-" * 70)
         
-        for _, row in top10.iterrows():
+        for _, row in top5.iterrows():
             driver_name = row.get('DriverName', f"Driver {row.get('DriverNumber', 'N/A')}")
             driver_num = row.get('DriverNumber', 'N/A')
             pred_pos = row['PredictedPosition']
@@ -2163,7 +2126,7 @@ def main():
                 # Future race - show only features used by model (8 features)
                 season_pts = row.get('SeasonPoints', 0)
                 season_avg = row.get('SeasonAvgFinish', 0)
-                track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                track_avg = row.get('HistoricalTrackAvgPosition', 5.0)
                 if pd.isna(track_avg):
                     track_avg = 10.0
                 constr_st = row.get('ConstructorStanding', 0)
@@ -2191,14 +2154,14 @@ def main():
             all_results.to_csv(output_path, index=False)
             print(f"\nAll {len(all_results)} driver predictions saved to {output_path}")
         else:
-            top10.to_csv(output_path, index=False)
+            top5.to_csv(output_path, index=False)
             print(f"\nTop 5 predictions saved to {output_path}")
         
         # Show summary statistics
         print(f"\nSummary:")
-        print(f"  Best predicted: Position {top10['PredictedPosition'].min():.2f}")
-        print(f"  Worst in top 10: Position {top10['PredictedPosition'].max():.2f}")
-        print(f"  Average predicted position (top 10): {top10['PredictedPosition'].mean():.2f}")
+        print(f"  Best predicted: Position {top5['PredictedPosition'].min():.2f}")
+        print(f"  Worst in Top 5: Position {top5['PredictedPosition'].max():.2f}")
+        print(f"  Average predicted position (Top 5): {top5['PredictedPosition'].mean():.2f}")
         
         # If actual positions are available, show ranking accuracy (skip for future races)
         if not is_future_race and 'ActualPosition' in all_results.columns:
@@ -2216,7 +2179,7 @@ def main():
             print()
             
             # Show detailed comparison table
-            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'AvgGridPos':<10} {'Error':<7} {'Status':<8} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
             print("-" * 130)
             
             # Collect data for filtered accuracy calculation
@@ -2224,7 +2187,7 @@ def main():
             actual_list = []
             grid_list = []
             
-            for _, row in top10.iterrows():
+            for _, row in top5.iterrows():
                 if not pd.isna(row.get('ActualPosition')):
                     pred_rank = row['Rank']
                     pred_score = row.get('PredictedPosition', pred_rank)
@@ -2240,8 +2203,8 @@ def main():
                     driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
                     ranking_errors.append((driver_name, pred_rank, actual_pos, error))
                     
-                    # Collect for filtered accuracy (use raw predicted scores, not ranks)
-                    predicted_list.append(pred_score)
+                    # Collect for filtered accuracy
+                    predicted_list.append(pred_rank)
                     actual_list.append(actual_pos)
                     grid_list.append(grid_pos_float)
                     
@@ -2258,7 +2221,7 @@ def main():
                     # Get only features used by model (8 features)
                     season_pts = row.get('SeasonPoints', 0)
                     season_avg = row.get('SeasonAvgFinish', 0)
-                    track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                    track_avg = row.get('HistoricalTrackAvgPosition', 5.0)
                     if pd.isna(track_avg):
                         track_avg = 10.0
                     constr_st = row.get('ConstructorStanding', 0)
@@ -2276,7 +2239,7 @@ def main():
                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
                     track_type_str = "Street" if track_type == 1 else "Permanent"
                     
-                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
+                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {grid_pos:<8} {error:<7} {status:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
             
             print("-" * 120)
             
@@ -2309,11 +2272,11 @@ def main():
                 for driver_name, pred_rank, actual_pos, error in ranking_errors[:3]:
                     print(f"    - {driver_name}: Predicted rank {pred_rank}, Actual position {actual_pos} (error: {error} positions)")
             
-            # Calculate Spearman rank correlation for top 10
+            # Calculate Spearman rank correlation for Top 5
             try:
                 from scipy.stats import spearmanr
-                pred_ranks = [row['Rank'] for _, row in top10.iterrows() if not pd.isna(row.get('ActualPosition'))]
-                actual_positions = [int(row['ActualPosition']) for _, row in top10.iterrows() if not pd.isna(row.get('ActualPosition'))]
+                pred_ranks = [row['Rank'] for _, row in top5.iterrows() if not pd.isna(row.get('ActualPosition'))]
+                actual_positions = [int(row['ActualPosition']) for _, row in top5.iterrows() if not pd.isna(row.get('ActualPosition'))]
                 
                 if len(pred_ranks) > 1:
                     correlation, _ = spearmanr(pred_ranks, actual_positions)

@@ -47,11 +47,33 @@ def handle_nan_values(X: np.ndarray) -> np.ndarray:
 
 
 def make_predictions(X_scaled: np.ndarray, model, model_type: str, device=None) -> np.ndarray:
-    """Make predictions using model."""
+    """
+    Make predictions using model(s).
+    If model is a list (ensemble), averages predictions from all models.
+    """
     if model_type == 'neural_network':
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X_scaled).to(device)
-            return model(X_tensor).cpu().numpy()
+            
+            # Check if model is a list (ensemble)
+            if isinstance(model, list):
+                # Ensemble: average predictions from all models
+                all_predictions = []
+                for m in model:
+                    pred = m(X_tensor).cpu().numpy()
+                    if pred.ndim > 1:
+                        pred = pred.flatten()
+                    all_predictions.append(pred)
+                
+                # Average predictions
+                predictions = np.mean(all_predictions, axis=0)
+            else:
+                # Single model
+                predictions = model(X_tensor).cpu().numpy()
+                if predictions.ndim > 1:
+                    predictions = predictions.flatten()
+            
+            return predictions
     else:
         return model.predict(X_scaled)
 
@@ -99,29 +121,57 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
         model_dir = Path(model_dir)
     
     if model_type == 'neural_network':
+        # Check for single model first (preferred)
         nn_model_path = model_dir / 'f1_predictor_model.pth'
         nn_scaler_path = model_dir / 'scaler.pkl'
         
         if nn_model_path.exists() and nn_scaler_path.exists():
-            # Load scaler first to determine input size
+            # Load single model
+            print("Loading neural network model...")
             with open(nn_scaler_path, 'rb') as f:
                 scaler = pickle.load(f)
             
-            # Get input size from scaler (should be 7 - ConstructorPoints removed for better accuracy)
             input_size = getattr(scaler, 'n_features_in_', 7)
-            
-            # Initialize and load model with correct input size
             device = torch.device('cpu')
             model = F1NeuralNetwork(
                 input_size=input_size,
-                hidden_sizes=[192, 96, 48],  # Updated architecture to reduce overfitting
+                hidden_sizes=[192, 96, 48],
                 dropout_rate=0.4
             ).to(device)
             model.load_state_dict(torch.load(nn_model_path, map_location=device))
             model.eval()
-            
+            print("Model loaded successfully")
             return model, scaler, 'neural_network', device
-        elif auto_fallback:
+        
+        # Fallback to ensemble models (backward compatibility)
+        ensemble_models = sorted(model_dir.glob('f1_predictor_model_ensemble_*.pth'))
+        
+        if len(ensemble_models) >= 3 and nn_scaler_path.exists():
+            # Load ensemble models
+            print("Loading ensemble models (3 models)...")
+            with open(nn_scaler_path, 'rb') as f:
+                scaler = pickle.load(f)
+            
+            input_size = getattr(scaler, 'n_features_in_', 7)
+            device = torch.device('cpu')
+            models = []
+            
+            for i, model_path in enumerate(ensemble_models[:3]):  # Use first 3 ensemble models
+                model = F1NeuralNetwork(
+                    input_size=input_size,
+                    hidden_sizes=[192, 96, 48],
+                    dropout_rate=0.4
+                ).to(device)
+                model.load_state_dict(torch.load(model_path, map_location=device))
+                model.eval()
+                models.append(model)
+                print(f"  Loaded ensemble model {i+1}/3")
+            
+            print("Ensemble models loaded successfully")
+            return models, scaler, 'neural_network', device
+        
+        # No model found
+        if auto_fallback:
             # Try Random Forest as fallback
             print(f"Warning: Neural network model not found at {nn_model_path}")
             print("Attempting to load Random Forest model instead...")
@@ -239,9 +289,6 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     X_scaled = scaler.transform(X)
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
     
-    # Ensure positions are in valid range (1-20)
-    predicted_positions = np.clip(predicted_positions, 1, 20)
-    
     # Add predictions to DataFrame
     result_df = drivers_df.copy()
     result_df['PredictedPosition'] = predicted_positions
@@ -283,9 +330,6 @@ def predict_from_dataframe(df: pd.DataFrame, model, scaler,
     X = handle_nan_values(X)
     X_scaled = scaler.transform(X)
     predicted_positions = make_predictions(X_scaled, model, model_type, device)
-    
-    # Ensure positions are in valid range (1-20)
-    predicted_positions = np.clip(predicted_positions, 1, 20)
     
     # Add predictions to DataFrame
     df['PredictedPosition'] = predicted_positions

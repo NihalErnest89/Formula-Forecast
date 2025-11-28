@@ -674,17 +674,9 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             # Get historical track average for this driver, or use fallback
             hist_track_avg = track_avg.get(driver_num, np.nan)
             
-            # Fallback: If no track-specific history, use driver's overall average position
+            # If no track-specific history, default to 10.0 for rookies (don't use overall average)
             if pd.isna(hist_track_avg):
-                driver_all_races = all_training_data[
-                    (all_training_data['DriverNumber'] == race['DriverNumber']) &
-                    ((all_training_data['Year'] < year) | 
-                     ((all_training_data['Year'] == year) & (all_training_data['RoundNumber'] < round_num)))
-                ]
-                if not driver_all_races.empty:
-                    valid_positions = driver_all_races['Position'].dropna()
-                    if len(valid_positions) > 0:
-                        hist_track_avg = valid_positions.mean()  # Overall career average
+                hist_track_avg = 10.0  # Default for rookies at this track
             
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
@@ -893,17 +885,9 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             # Get historical track average for this driver, or use fallback
             hist_track_avg = track_avg.get(driver_num, np.nan)
             
-            # Fallback: If no track-specific history, use driver's overall average from training data
+            # If no track-specific history, default to 10.0 for rookies (don't use overall average)
             if pd.isna(hist_track_avg):
-                driver_all_races = all_training_data[all_training_data['DriverNumber'] == race['DriverNumber']]
-                if not driver_all_races.empty:
-                    valid_positions = driver_all_races['Position'].dropna()
-                    if len(valid_positions) > 0:
-                        hist_track_avg = valid_positions.mean()  # Overall career average from training data
-                    else:
-                        hist_track_avg = 10.0  # Default for rookies with no history
-                else:
-                    hist_track_avg = 10.0  # Default for rookies with no history
+                hist_track_avg = 10.0  # Default for rookies at this track
             
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
@@ -1106,8 +1090,8 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
 
 def main():
     """Main function to collect and organize F1 data."""
-    # Training data from 2022 onwards (more recent, relevant data)
-    training_years = [2022, 2023, 2024]
+    # Training data from 2020 onwards (expanded dataset for better generalization)
+    training_years = [2020, 2021, 2022, 2023, 2024]
     # Current season for testing (2025)
     test_year = 2025
     
