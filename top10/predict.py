@@ -510,7 +510,7 @@ def calculate_filtered_accuracy(predicted_scores: list, actual: list, grid_posit
             'within_1': within_1_full,
             'within_2': within_2_full,
             'within_3': within_3_full,
-            'count': len(predicted)
+            'count': len(predicted_scores)
         },
         'filtered': {
             'mae': mae_filtered,
@@ -1981,8 +1981,8 @@ def main():
                             print(f"{'='*70}")
                             print(f"Comparing: Predicted Score vs Actual Finishing Position (1-20)")
                             print()
-                            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
-                            print("-" * 130)
+                            print(f"{'Driver':<12} {'PredScore':<9} {'PredPos':<8} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+                            print("-" * 140)
                             
                             # Collect data for accuracy calculation
                             predicted_list = []
@@ -2031,7 +2031,67 @@ def main():
                                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
                                     track_type_str = "Street" if track_type == 1 else "Permanent"
                                     
-                                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
+                                    print(f"{driver_name:<12} {pred_score:<9.2f} {pred_rank:<8} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
+                            
+                            # Display filtered top 10 (excluding outliers, re-ranked) before accuracy metrics
+                            # Filter out outliers and re-rank
+                            filtered_rows = []
+                            for _, row in top10.iterrows():
+                                if not pd.isna(row.get('ActualPosition')):
+                                    actual_pos = int(row['ActualPosition'])
+                                    grid_pos = row.get('GridPosition', np.nan)
+                                    if pd.isna(grid_pos):
+                                        grid_pos_float = 10.5
+                                    else:
+                                        grid_pos_float = float(grid_pos)
+                                    
+                                    # Check if outlier (actual > grid + 6)
+                                    position_drop = actual_pos - grid_pos_float
+                                    if position_drop <= 6:
+                                        filtered_rows.append((row, row.get('PredictedPosition', row['Rank'])))
+                            
+                            if filtered_rows:
+                                # Sort by predicted score and assign new ranks
+                                filtered_rows.sort(key=lambda x: x[1])
+                                
+                                print(f"\n{'='*70}")
+                                print(f"FILTERED TOP 10 (excluding outliers)")
+                                print(f"{'='*70}")
+                                print(f"{'Driver':<12} {'PredScore':<9} {'PredPos':<8} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+                                print("-" * 140)
+                                
+                                for new_rank, (row, pred_score) in enumerate(filtered_rows, 1):
+                                    actual_pos = int(row['ActualPosition'])
+                                    grid_pos = row.get('GridPosition', 'N/A')
+                                    if pd.isna(grid_pos):
+                                        grid_pos = 'N/A'
+                                    else:
+                                        grid_pos = int(grid_pos)
+                                    error = abs(new_rank - actual_pos)
+                                    driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
+                                    status = get_status(error)
+                                    
+                                    season_pts = row.get('SeasonPoints', 0)
+                                    season_avg = row.get('SeasonAvgFinish', 0)
+                                    track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                                    if pd.isna(track_avg):
+                                        track_avg = 10.0
+                                    constr_st = row.get('ConstructorStanding', 0)
+                                    constr_track_avg = row.get('ConstructorTrackAvg', 10.0)
+                                    if pd.isna(constr_track_avg):
+                                        constr_track_avg = 10.0
+                                    recent_form = row.get('RecentForm', 0)
+                                    track_type = row.get('TrackType', 0)
+                                    
+                                    season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                                    season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                                    track_avg_str = f"{track_avg:.2f}"
+                                    constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                                    constr_track_avg_str = f"{constr_track_avg:.2f}"
+                                    recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                                    track_type_str = "Street" if track_type == 1 else "Permanent"
+                                    
+                                    print(f"{driver_name:<12} {pred_score:<9.2f} {new_rank:<8} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
                             
                             # Calculate and display filtered accuracy
                             if predicted_list:
@@ -2216,8 +2276,8 @@ def main():
             print()
             
             # Show detailed comparison table
-            print(f"{'Driver':<12} {'Pred':<6} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
-            print("-" * 130)
+            print(f"{'Driver':<12} {'PredScore':<9} {'PredPos':<8} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+            print("-" * 140)
             
             # Collect data for filtered accuracy calculation
             predicted_list = []
@@ -2276,9 +2336,69 @@ def main():
                     recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
                     track_type_str = "Street" if track_type == 1 else "Permanent"
                     
-                    print(f"{driver_name:<12} {pred_score:<6.2f} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
+                    print(f"{driver_name:<12} {pred_score:<9.2f} {pred_rank:<8} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
             
             print("-" * 120)
+            
+            # Display filtered top 10 (excluding outliers, re-ranked) before accuracy metrics
+            # Filter out outliers and re-rank
+            filtered_rows = []
+            for _, row in top10.iterrows():
+                if not pd.isna(row.get('ActualPosition')):
+                    actual_pos = int(row['ActualPosition'])
+                    grid_pos = row.get('GridPosition', np.nan)
+                    if pd.isna(grid_pos):
+                        grid_pos_float = 10.5
+                    else:
+                        grid_pos_float = float(grid_pos)
+                    
+                    # Check if outlier (actual > grid + 6)
+                    position_drop = actual_pos - grid_pos_float
+                    if position_drop <= 6:
+                        filtered_rows.append((row, row.get('PredictedPosition', row['Rank'])))
+            
+            if filtered_rows:
+                # Sort by predicted score and assign new ranks
+                filtered_rows.sort(key=lambda x: x[1])
+                
+                print(f"\n{'='*70}")
+                print(f"FILTERED TOP 10 (excluding outliers)")
+                print(f"{'='*70}")
+                print(f"{'Driver':<12} {'PredScore':<9} {'PredPos':<8} {'Actual':<8} {'Error':<7} {'Status':<8} {'AvgGridPos':<10} {'SeasPts':<8} {'SeasAvg':<8} {'TrackAvg':<9} {'ConstrSt':<9} {'ConstrTrk':<9} {'Form':<7} {'TrackType':<9}")
+                print("-" * 140)
+                
+                for new_rank, (row, pred_score) in enumerate(filtered_rows, 1):
+                    actual_pos = int(row['ActualPosition'])
+                    grid_pos = row.get('GridPosition', 'N/A')
+                    if pd.isna(grid_pos):
+                        grid_pos = 'N/A'
+                    else:
+                        grid_pos = int(grid_pos)
+                    error = abs(new_rank - actual_pos)
+                    driver_name = row.get('DriverName', f"Driver {row['DriverNumber']}")
+                    status = get_status(error)
+                    
+                    season_pts = row.get('SeasonPoints', 0)
+                    season_avg = row.get('SeasonAvgFinish', 0)
+                    track_avg = row.get('HistoricalTrackAvgPosition', 10.0)
+                    if pd.isna(track_avg):
+                        track_avg = 10.0
+                    constr_st = row.get('ConstructorStanding', 0)
+                    constr_track_avg = row.get('ConstructorTrackAvg', 10.0)
+                    if pd.isna(constr_track_avg):
+                        constr_track_avg = 10.0
+                    recent_form = row.get('RecentForm', 0)
+                    track_type = row.get('TrackType', 0)
+                    
+                    season_pts_str = f"{season_pts:.0f}" if not pd.isna(season_pts) else "N/A"
+                    season_avg_str = f"{season_avg:.2f}" if not pd.isna(season_avg) else "N/A"
+                    track_avg_str = f"{track_avg:.2f}"
+                    constr_st_str = f"{constr_st:.0f}" if not pd.isna(constr_st) else "N/A"
+                    constr_track_avg_str = f"{constr_track_avg:.2f}"
+                    recent_form_str = f"{recent_form:.2f}" if not pd.isna(recent_form) else "N/A"
+                    track_type_str = "Street" if track_type == 1 else "Permanent"
+                    
+                    print(f"{driver_name:<12} {pred_score:<9.2f} {new_rank:<8} {actual_pos:<8} {error:<7} {status:<8} {grid_pos:<8} {season_pts_str:<8} {season_avg_str:<8} {track_avg_str:<9} {constr_st_str:<9} {constr_track_avg_str:<9} {recent_form_str:<7} {track_type_str:<9}")
             
             # Calculate filtered accuracy
             if predicted_list:
