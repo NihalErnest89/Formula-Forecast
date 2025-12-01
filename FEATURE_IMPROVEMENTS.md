@@ -675,6 +675,67 @@ python compare_weight_initialization.py
 
 ---
 
+### 16. Code Refactoring and Modularization
+
+**Change**: Refactored `top10/predict.py` from a monolithic 2200+ line file into a modular structure with separate modules.
+
+**New Module Structure**:
+- **`constants.py`**: Centralized feature definitions (`FEATURE_COLS`)
+- **`model_loader.py`**: Model loading, prediction functions, and neural network class
+- **`feature_calculation.py`**: Feature calculation and state update functions
+- **`evaluation.py`**: Evaluation metrics and status calculation
+- **`race_selection.py`**: Interactive race selection and future race handling
+- **`predict.py`**: Main prediction script (now ~880 lines, down from 2200+)
+
+**Benefits**:
+- **Maintainability**: Easier to locate and modify specific functionality
+- **Reusability**: Functions can be imported and used in other scripts
+- **Readability**: Smaller, focused files are easier to understand
+- **Testing**: Individual modules can be tested independently
+- **Code organization**: Logical separation of concerns
+
+**Impact**: 
+- Reduced `predict.py` from 2200+ lines to ~880 lines
+- Improved code organization and maintainability
+- No functional changes - all behavior preserved
+
+---
+
+### 17. Sprint Race Points Aggregation Fix
+
+**Issue**: For sprint race weekends, `SeasonPoints` was incorrectly calculated because FastF1's `Points` column sometimes only contained sprint points, not total event points (race + sprint).
+
+**Fix**: Modified `collect_data.py` to:
+- Explicitly calculate `RacePoints` from `Position` using the standard F1 points system
+- Sum `RacePoints` and `SprintPoints` to get `TotalEventPoints`
+- Use `TotalEventPoints` as the `Points` feature (source of truth)
+
+**Implementation**:
+```python
+# F1 points system for main races
+points_system = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+
+# Calculate race points from position
+results['RacePoints'] = results['Position'].map(points_system).fillna(0)
+
+# Add sprint points to race points for total event points
+if sprint_points_dict:
+    results['SprintPoints'] = results['DriverNumber'].astype(str).map(sprint_points_dict).fillna(0)
+    results['TotalEventPoints'] = results['RacePoints'].fillna(0) + results['SprintPoints']
+else:
+    results['SprintPoints'] = 0
+    results['TotalEventPoints'] = results['RacePoints'].fillna(0)
+```
+
+**Impact**:
+- Correct `SeasonPoints` calculation for all drivers, including sprint weekends
+- Accurate feature representation for races with sprint events
+- Ensures predictions reflect true cumulative season performance
+
+**Note**: This fix applies to all drivers automatically when `collect_data.py` is run, as it iterates through all drivers and calculates points based on their finishing positions and sprint points.
+
+---
+
 ## Future Considerations
 
 Potential areas for further improvement:
@@ -687,4 +748,5 @@ Potential areas for further improvement:
 6. **Hybrid models**: Combine regression and classification predictions
 7. **Attention mechanisms**: Focus on most relevant features per driver
 8. **Time-series modeling**: Explicitly model temporal dependencies
+9. **Further code optimization**: Additional refactoring opportunities as the codebase grows
 

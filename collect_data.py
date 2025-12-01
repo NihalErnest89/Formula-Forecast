@@ -66,6 +66,17 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
                 results['EventName'] = event['EventName']
                 results['RoundNumber'] = event['RoundNumber']
                 
+                # Calculate race points from finishing position (more reliable than Points column)
+                # F1 points system: 1st=25, 2nd=18, 3rd=15, 4th=12, 5th=10, 6th=8, 7th=6, 8th=4, 9th=2, 10th=1
+                points_system = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+                
+                # Get race position (use Position column, or Status if DNF)
+                if 'Position' in results.columns:
+                    results['RacePoints'] = results['Position'].map(points_system).fillna(0)
+                else:
+                    # Fallback: use Points column if Position not available
+                    results['RacePoints'] = results['Points'].fillna(0)
+                
                 # Try to get sprint points if sprint race exists
                 sprint_points_dict = {}
                 try:
@@ -86,11 +97,12 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
                 # Add sprint points to race points for total event points
                 if sprint_points_dict:
                     results['SprintPoints'] = results['DriverNumber'].astype(str).map(sprint_points_dict).fillna(0)
-                    # Total points = race points + sprint points
-                    results['TotalEventPoints'] = results['Points'].fillna(0) + results['SprintPoints']
+                    # Total points = race points (calculated from position) + sprint points
+                    results['TotalEventPoints'] = results['RacePoints'].fillna(0) + results['SprintPoints']
                 else:
                     results['SprintPoints'] = 0
-                    results['TotalEventPoints'] = results['Points'].fillna(0)
+                    # Total points = race points (calculated from position)
+                    results['TotalEventPoints'] = results['RacePoints'].fillna(0)
                 
                 # Try to get qualifying/starting grid position
                 # Check if GridPosition column exists, if not try to get from qualifying session
@@ -820,7 +832,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
                 'Points': race.get('TotalEventPoints', race.get('Points', 0)),  # Race + Sprint points (source of truth)
-                'RacePoints': race.get('Points', 0),  # Race points only
+                'RacePoints': race.get('RacePoints', race.get('Points', 0)),  # Race points only (calculated from position)
                 'SprintPoints': race.get('SprintPoints', 0),  # Sprint points only
                 'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
                 'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''
@@ -1040,7 +1052,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
                 'Points': race.get('TotalEventPoints', race.get('Points', 0)),  # Race + Sprint points (source of truth)
-                'RacePoints': race.get('Points', 0),  # Race points only
+                'RacePoints': race.get('RacePoints', race.get('Points', 0)),  # Race points only (calculated from position)
                 'SprintPoints': race.get('SprintPoints', 0),  # Sprint points only
                 'IsDNF': is_dnf,  # Flag for DNF/DSQ/DNS
                 'Status': status if pd.notna(status) else position_text if pd.notna(position_text) else ''

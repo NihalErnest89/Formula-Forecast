@@ -17,29 +17,518 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import matplotlib.pyplot as plt
-import sys
-
-# Import from top20/train.py (has updated prepare_features_and_labels with filtering params)
-parent_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(parent_dir))
-# Import with explicit module name to avoid circular import
-import importlib.util
-spec = importlib.util.spec_from_file_location("train_module", parent_dir / "top20" / "train.py")
-train_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(train_module)
-
-# Import the functions we need
-F1Dataset = train_module.F1Dataset
-F1NeuralNetwork = train_module.F1NeuralNetwork
-load_data = train_module.load_data
-prepare_features_and_labels = train_module.prepare_features_and_labels
-train_epoch = train_module.train_epoch
-evaluate_model = train_module.evaluate_model
-get_feature_importance = train_module.get_feature_importance
-train_model = train_module.train_model
-plot_training_history = train_module.plot_training_history
-plot_weight_progression = train_module.plot_weight_progression
 import pickle
+
+
+# ============================================================================
+# CLASSES AND FUNCTIONS (Standalone - no dependencies on top20/train.py)
+# ============================================================================
+
+class F1Dataset(Dataset):
+    """PyTorch Dataset for F1 prediction data."""
+    
+    def __init__(self, features, labels):
+        self.features = torch.FloatTensor(features)
+        self.labels = torch.LongTensor(labels)
+    
+    def __len__(self):
+        return len(self.features)
+    
+    def __getitem__(self, idx):
+        return self.features[idx], self.labels[idx]
+
+
+class F1NeuralNetwork(nn.Module):
+    """
+    Deep Neural Network for F1 Position Prediction (Regression).
+    
+    Architecture:
+    - Input layer: 9 features
+    - Hidden layers: Multiple fully connected layers with ReLU activation
+    - Output layer: Single value (predicted finishing position 1-10)
+    """
+    
+    def __init__(self, input_size=9, hidden_sizes=[192, 96, 48], dropout_rate=0.4, equal_init=True):
+        super(F1NeuralNetwork, self).__init__()
+        
+        self.input_size = input_size
+        self.equal_init = equal_init
+        
+        layers = []
+        prev_size = input_size
+        
+        # Build hidden layers
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(prev_size, hidden_size))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout_rate))
+            layers.append(nn.BatchNorm1d(hidden_size))
+            prev_size = hidden_size
+        
+        # Output layer: single value for position prediction
+        layers.append(nn.Linear(prev_size, 1))
+        
+        self.network = nn.Sequential(*layers)
+        
+        # Initialize weights
+        if equal_init:
+            self._initialize_equal_weights()
+        else:
+            self._initialize_he_weights()
+    
+    def _initialize_equal_weights(self):
+        """Initialize first layer weights to give equal importance to all input features."""
+        first_layer = self.network[0]
+        with torch.no_grad():
+            init_value = 1.0 / np.sqrt(self.input_size)
+            first_layer.weight.fill_(init_value)
+            if first_layer.bias is not None:
+                first_layer.bias.fill_(0.0)
+        print(f"  Initialized first layer with equal weights: {init_value:.4f} for all features")
+    
+    def _initialize_he_weights(self):
+        """Initialize all layers with He/Kaiming initialization (optimal for ReLU)."""
+        with torch.no_grad():
+            for module in self.modules():
+                if isinstance(module, nn.Linear):
+                    nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0.0)
+        print(f"  Initialized all layers with He/Kaiming initialization (optimal for ReLU)")
+    
+    def forward(self, x):
+        """Forward pass through the network."""
+        return self.network(x).squeeze()
+
+
+def load_data(data_dir: str = None):
+    """Load training and test data."""
+    if data_dir is None:
+        script_dir = Path(__file__).parent
+        data_dir = script_dir.parent / 'data'
+    else:
+        data_dir = Path(data_dir)
+    
+    training_path = data_dir / 'training_data.csv'
+    test_path = data_dir / 'test_data.csv'
+    metadata_path = data_dir / 'metadata.json'
+    
+    if not training_path.exists():
+        raise FileNotFoundError(f"Training data not found at {training_path}. Run collect_data.py first.")
+    
+    training_df = pd.read_csv(training_path)
+    test_df = pd.read_csv(test_path) if test_path.exists() else pd.DataFrame()
+    
+    metadata = {}
+    if metadata_path.exists():
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+    
+    return training_df, test_df, metadata
+
+
+def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None, 
+                                filter_dnf=True, filter_outliers=True, 
+                                outlier_threshold=6, top10_only=False):
+    """
+    Prepare feature matrix and label vector from DataFrame.
+    
+    Args:
+        df: DataFrame with features and labels
+        label_encoder: Optional pre-fitted label encoder
+        filter_dnf: If True, remove DNF/DSQ/DNS entries
+        filter_outliers: If True, remove entries where finish position is much worse than grid position
+        outlier_threshold: Maximum allowed difference between finish and grid position (default: 6)
+        top10_only: If True, only include positions 1-10 (default: False)
+        
+    Returns:
+        Tuple of (X, y, label_encoder, filter_stats, feature_names)
+    """
+    # Base features (9 features)
+    desired_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
+                       'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']
+    
+    # Use only features that exist in the dataframe
+    feature_cols = [f for f in desired_features if f in df.columns]
+    
+    if 'SeasonStanding' not in feature_cols and 'SeasonPoints' in feature_cols:
+        print(f"  Note: SeasonStanding not in data, using SeasonPoints only (regenerate data with collect_data.py for both features)")
+    
+    if len(feature_cols) == 0:
+        raise ValueError("No valid feature columns found in data!")
+    
+    # Start with all rows
+    valid_mask = pd.Series([True] * len(df), index=df.index)
+    filter_stats = {'initial_count': len(df), 'dnf_removed': 0, 'outlier_removed': 0, 'nan_removed': 0, 'top10_filtered': 0}
+    
+    # Filter to top 10 only if requested
+    if top10_only and 'ActualPosition' in df.columns:
+        top10_mask = df['ActualPosition'] <= 10
+        filter_stats['top10_filtered'] = (~top10_mask & valid_mask).sum()
+        valid_mask = valid_mask & top10_mask
+        if filter_stats['top10_filtered'] > 0:
+            print(f"  Filtered to top 10 only: removed {filter_stats['top10_filtered']} positions > 10")
+    
+    # Filter DNFs if requested
+    if filter_dnf and 'IsDNF' in df.columns:
+        dnf_mask = df['IsDNF'].fillna(False).astype(bool)
+        filter_stats['dnf_removed'] = dnf_mask.sum()
+        valid_mask = valid_mask & ~dnf_mask
+        if filter_stats['dnf_removed'] > 0:
+            print(f"  Removed {filter_stats['dnf_removed']} DNF/DSQ/DNS entries")
+    
+    # Filter outliers
+    if filter_outliers and 'GridPosition' in df.columns and 'ActualPosition' in df.columns:
+        valid_for_outlier_check = valid_mask & df['ActualPosition'].notna() & df['GridPosition'].notna()
+        
+        if valid_for_outlier_check.any():
+            position_diff = df.loc[valid_for_outlier_check, 'ActualPosition'] - df.loc[valid_for_outlier_check, 'GridPosition']
+            outlier_mask_local = position_diff > outlier_threshold
+            
+            outlier_mask = pd.Series(False, index=df.index)
+            outlier_mask.loc[valid_for_outlier_check] = outlier_mask_local
+            
+            filter_stats['outlier_removed'] = outlier_mask.sum()
+            valid_mask = valid_mask & ~outlier_mask
+            if filter_stats['outlier_removed'] > 0:
+                print(f"  Removed {filter_stats['outlier_removed']} outliers (finish > grid + {outlier_threshold})")
+    
+    # Select labels
+    y = df['ActualPosition'].values
+    
+    # Remove any NaN positions
+    nan_mask = ~pd.isna(y)
+    filter_stats['nan_removed'] = (~nan_mask & valid_mask).sum()
+    valid_mask = valid_mask & nan_mask
+    
+    # Apply all filters
+    df_filtered = df[valid_mask].copy()
+    filter_stats['final_count'] = len(df_filtered)
+    
+    print(f"  Filtering: {filter_stats['initial_count']} -> {filter_stats['final_count']} samples "
+          f"({filter_stats['initial_count'] - filter_stats['final_count']} removed)")
+    
+    # CRITICAL: Renumber positions per race after filtering
+    if 'ActualPosition' in df_filtered.columns and ('Year' in df_filtered.columns or 'RoundNumber' in df_filtered.columns):
+        if 'Year' in df_filtered.columns and 'RoundNumber' in df_filtered.columns:
+            if 'EventName' in df_filtered.columns:
+                race_groups = df_filtered.groupby(['Year', 'RoundNumber', 'EventName'])
+            else:
+                race_groups = df_filtered.groupby(['Year', 'RoundNumber'])
+        elif 'Year' in df_filtered.columns:
+            if 'EventName' in df_filtered.columns:
+                race_groups = df_filtered.groupby(['Year', 'EventName'])
+            else:
+                race_groups = df_filtered.groupby('Year')
+        else:
+            race_groups = None
+        
+        if race_groups is not None:
+            df_filtered = df_filtered.copy()
+            for (race_key, group) in race_groups:
+                sorted_indices = group.sort_values('ActualPosition').index
+                for new_pos, idx in enumerate(sorted_indices, start=1):
+                    df_filtered.at[idx, 'ActualPosition'] = new_pos
+            print(f"  Renumbered positions per race after filtering")
+    
+    # Check if TrackType exists in data, if not add it
+    if 'TrackType' not in df_filtered.columns and 'EventName' in df_filtered.columns:
+        street_circuits = ['Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas', 'Saudi Arabian']
+        df_filtered['TrackType'] = df_filtered['EventName'].apply(
+            lambda x: 1 if any(street in str(x) for street in street_circuits) else 0
+        )
+        print(f"  Calculated TrackType from EventName (was missing from data)")
+    
+    # Select features
+    X = df_filtered[feature_cols].copy()
+    feature_names = feature_cols.copy()
+    
+    y = df_filtered['ActualPosition'].values
+    
+    # Handle missing values
+    for col in X.columns:
+        if X[col].isna().any():
+            median_val = X[col].median()
+            if pd.isna(median_val):
+                X[col] = X[col].fillna(0)
+            else:
+                X[col] = X[col].fillna(median_val)
+        
+        # Clip extreme outliers
+        if col != 'GridPosition':
+            mean_val = X[col].mean()
+            std_val = X[col].std()
+            if not pd.isna(std_val) and std_val > 0:
+                lower_bound = mean_val - 3 * std_val
+                upper_bound = mean_val + 3 * std_val
+                X[col] = X[col].clip(lower=lower_bound, upper=upper_bound)
+    
+    return X.values, y, None, filter_stats, feature_names
+
+
+class PositionAwareLoss(nn.Module):
+    """Loss function that penalizes exact position misses more heavily."""
+    def __init__(self, exact_weight=2.0, base_loss='huber', delta=1.0):
+        super().__init__()
+        self.exact_weight = exact_weight
+        self.delta = delta
+        if base_loss == 'huber':
+            self.base_loss = nn.HuberLoss(delta=delta)
+        elif base_loss == 'mse':
+            self.base_loss = nn.MSELoss()
+        else:
+            self.base_loss = nn.L1Loss()
+    
+    def forward(self, pred, target):
+        base = self.base_loss(pred, target)
+        rounded_pred = torch.round(pred)
+        exact_misses = (rounded_pred != target).float()
+        weighted_loss = base * (1 + self.exact_weight * exact_misses.mean())
+        return weighted_loss
+
+
+def train_epoch(model, dataloader, criterion, optimizer, device):
+    """Train for one epoch."""
+    model.train()
+    total_loss = 0
+    
+    for features, labels in dataloader:
+        features, labels = features.to(device), labels.to(device).float()
+        optimizer.zero_grad()
+        outputs = model(features)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        total_loss += loss.item()
+    
+    avg_loss = total_loss / len(dataloader)
+    
+    # Calculate MAE for monitoring
+    with torch.no_grad():
+        all_preds = []
+        all_labels = []
+        for features, labels in dataloader:
+            features, labels = features.to(device), labels.to(device).float()
+            outputs = model(features)
+            all_preds.extend(outputs.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+        mae = mean_absolute_error(all_labels, all_preds)
+    
+    return avg_loss, mae
+
+
+def evaluate_model(model, dataloader, criterion, device):
+    """Evaluate model on validation/test set."""
+    model.eval()
+    total_loss = 0
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for features, labels in dataloader:
+            features, labels = features.to(device), labels.to(device).float()
+            outputs = model(features)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item()
+            all_preds.extend(outputs.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    mae = mean_absolute_error(all_labels, all_preds)
+    mse = mean_squared_error(all_labels, all_preds)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(all_labels, all_preds)
+    
+    all_preds_rounded = np.round(np.array(all_preds))
+    all_labels_array = np.array(all_labels)
+    position_error = np.abs(all_labels_array - np.array(all_preds))
+    exact = np.mean(all_preds_rounded == all_labels_array) * 100
+    within_1 = np.mean(position_error <= 1) * 100
+    within_2 = np.mean(position_error <= 2) * 100
+    within_3 = np.mean(position_error <= 3) * 100
+    
+    avg_loss = total_loss / len(dataloader)
+    all_preds = np.array(all_preds)
+    all_labels = np.array(all_labels)
+    
+    return avg_loss, mae, rmse, r2, exact, within_1, within_2, within_3, all_preds, all_labels
+
+
+def get_feature_importance(model, feature_names, device):
+    """Estimate feature importance by examining first layer weights."""
+    first_layer = model.network[0]
+    weights = first_layer.weight.data.cpu().numpy()
+    importances = np.mean(np.abs(weights), axis=0)
+    importances = importances / importances.sum()
+    return dict(zip(feature_names, importances))
+
+
+def train_model(X_train, y_train, X_val, y_val,
+                epochs=300, batch_size=32, learning_rate=0.001, device='cpu',
+                hidden_sizes=[128, 64, 32], feature_names=None, early_stop_patience=None, 
+                track_weights=True, **kwargs):
+    """Train the neural network model."""
+    train_dataset = F1Dataset(X_train, y_train)
+    val_dataset = F1Dataset(X_val, y_val)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    input_size = X_train.shape[1]
+    model = F1NeuralNetwork(input_size=input_size, hidden_sizes=hidden_sizes, 
+                           dropout_rate=0.4, equal_init=False).to(device)
+    
+    exact_weight = kwargs.get('exact_weight', 5.0)
+    criterion = PositionAwareLoss(exact_weight=exact_weight, base_loss='huber', delta=1.0)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=2e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+                                                      factor=0.5, patience=8, min_lr=1e-6)
+    
+    history = {
+        'train_loss': [],
+        'train_mae': [],
+        'val_loss': [],
+        'val_mae': [],
+        'weight_progression': []
+    }
+    
+    best_val_mae = float('inf')
+    best_model_state = None
+    patience_counter = 0
+    if early_stop_patience is None:
+        early_stop_patience = 100
+    
+    print(f"\nTraining Neural Network on {device}")
+    print(f"Model Architecture:")
+    print(model)
+    print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    
+    if model.equal_init and feature_names:
+        initial_importance = get_feature_importance(model, feature_names, device)
+        print(f"\nInitial Feature Importance (Equal Weights):")
+        for name, importance in initial_importance.items():
+            print(f"  {name}: {importance:.4f}")
+    
+    print(f"\nStarting training for {epochs} epochs...")
+    print("-" * 60)
+    
+    weight_track_interval = max(1, epochs // 50)
+    
+    for epoch in range(epochs):
+        train_loss, train_mae = train_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_mae, val_rmse, val_r2, val_exact, val_w1, val_w2, val_w3, _, _ = evaluate_model(model, val_loader, criterion, device)
+        scheduler.step(val_loss)
+        
+        history['train_loss'].append(train_loss)
+        history['train_mae'].append(train_mae)
+        history['val_loss'].append(val_loss)
+        history['val_mae'].append(val_mae)
+        
+        if epoch % weight_track_interval == 0 or epoch == epochs - 1:
+            first_layer = model.network[0]
+            weights = first_layer.weight.data.cpu().numpy()
+            avg_weights = np.mean(np.abs(weights), axis=0)
+            avg_weights = avg_weights / avg_weights.sum()
+            history['weight_progression'].append({
+                'epoch': epoch,
+                'weights': avg_weights.tolist()
+            })
+        
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            print(f"Epoch [{epoch+1}/{epochs}]")
+            print(f"  Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.3f} positions")
+            print(f"  Val Loss: {val_loss:.4f}, Val MAE: {val_mae:.3f} positions")
+            print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
+        
+        if early_stop_patience is not None:
+            if val_mae < best_val_mae:
+                best_val_mae = val_mae
+                best_model_state = model.state_dict().copy()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= early_stop_patience:
+                    print(f"\nEarly stopping at epoch {epoch+1} (no improvement for {early_stop_patience} epochs)")
+                    break
+        else:
+            if val_mae < best_val_mae:
+                best_val_mae = val_mae
+                best_model_state = model.state_dict().copy()
+    
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+    
+    print(f"\nBest validation MAE: {best_val_mae:.3f} positions")
+    return model, history
+
+
+def plot_weight_progression(history, feature_names, save_path=None):
+    """Plot how feature weights evolve during training."""
+    if save_path is None:
+        script_dir = Path(__file__).parent
+        save_path = script_dir.parent / 'images' / 'weight_progression_top10.png'
+    else:
+        save_path = Path(save_path)
+    
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if 'weight_progression' not in history or len(history['weight_progression']) == 0:
+        print("No weight progression data available.")
+        return
+    
+    epochs = [w['epoch'] for w in history['weight_progression']]
+    weights_data = np.array([w['weights'] for w in history['weight_progression']])
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for i, feature_name in enumerate(feature_names):
+        ax.plot(epochs, weights_data[:, i], label=feature_name, linewidth=2, alpha=0.8)
+    
+    ax.set_xlabel('Epoch', fontsize=12)
+    ax.set_ylabel('Normalized Weight Importance', fontsize=12)
+    ax.set_title('Feature Weight Progression During Training', fontsize=14, fontweight='bold')
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, max(0.3, weights_data.max() * 1.1))
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"Weight progression plot saved to {save_path}")
+    plt.close()
+
+
+def plot_training_history(history, save_path=None):
+    """Plot training and validation loss/accuracy curves."""
+    if save_path is None:
+        script_dir = Path(__file__).parent
+        save_path = script_dir.parent / 'images' / 'training_history_top10.png'
+    else:
+        save_path = Path(save_path)
+    
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    epochs = range(1, len(history['train_loss']) + 1)
+    
+    ax1.plot(epochs, history['train_loss'], 'b-', label='Training Loss')
+    ax1.plot(epochs, history['val_loss'], 'r-', label='Validation Loss')
+    ax1.set_title('Model Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.legend()
+    ax1.grid(True)
+    
+    ax2.plot(epochs, history['train_mae'], 'b-', label='Training MAE')
+    ax2.plot(epochs, history['val_mae'], 'r-', label='Validation MAE')
+    ax2.set_title('Mean Absolute Error (Position Prediction)')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('MAE (positions)')
+    ax2.legend()
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    print(f"Training history plot saved to {save_path}")
+    plt.close()
 
 
 def save_model(model, scaler, label_encoder, output_dir: str = None, model_index: int = None):
@@ -199,9 +688,8 @@ def main():
             equal_init=False  # Use He/Kaiming initialization (optimal for ReLU)
         ).to(device)
         
-        # Use PositionAwareLoss from top20/train.py
+        # Use PositionAwareLoss (defined above)
         # Weight=5.0 improves exact accuracy by ~1% and MAE by ~0.02 compared to weight=2.0
-        PositionAwareLoss = train_module.PositionAwareLoss
         criterion = PositionAwareLoss(exact_weight=5.0, base_loss='huber', delta=1.0)
         optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=2e-4)  # Increased regularization
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
