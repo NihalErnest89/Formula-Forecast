@@ -1,0 +1,41 @@
+================================================================================
+F1 NEURAL NETWORK ARCHITECTURE
+================================================================================
+
+Input Layer: 9 features
+
+Architecture Flow:
+--------------------------------------------------------------------------------
+  [9] -> Linear -> ReLU -> Dropout -> BatchNorm -> [192]
+  [192] -> Linear -> ReLU -> Dropout -> BatchNorm -> [96]
+  [96] -> Linear -> ReLU -> Dropout -> BatchNorm -> [48]
+  [48] -> Linear -> ReLU -> Dropout -> BatchNorm -> [1]
+  [1] -> Linear -> [1] (Output)
+
+Layer Details:
+--------------------------------------------------------------------------------
+Layer 1: network.0
+  Type: Linear
+  Input Features: 9
+  Output Features: 192
+  Parameters: 1,920
+
+Layer 2: network.4
+  Type: Linear
+  Input Features: 192
+  Output Features: 96
+  Parameters: 18,528
+
+Layer 3: network.8
+  Type: Linear
+  Input Features: 96
+  Output Features: 48
+  Parameters: 4,656
+
+Layer 4: network.12
+  Type: Linear
+  Input Features: 48
+  Output Features: 1
+  Parameters: 49
+
+================================================================================

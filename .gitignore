@@ -12,9 +12,7 @@ models/
 *.pt
 
 # Output directories (generated files)
-images/
 json/
-*.png
 *.jpg
 *.jpeg
 *.gif
