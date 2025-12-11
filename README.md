@@ -293,13 +293,17 @@ After training, the following files are generated:
 
 ## Configuration
 
-Model configuration is centralized in `top10/config.py`:
+Model configuration is centralized in `top10/config.py`. You can modify the following settings:
 
 - `FEATURE_COLS`: List of 9 feature column names
 - `TRAINING_YEARS`: Years to use for training data (default: [2020, 2021, 2022, 2023, 2024])
 - `TEST_YEAR`: Year to use for test data (default: 2025)
 
-Modify these values to change the training/test split or feature set.
+**To change training/test years**: Edit `top10/config.py` and modify the `TRAINING_YEARS` and `TEST_YEAR` variables. After modifying `config.py`, you'll need to:
+1. Re-run `collect_data.py` to collect data for the new years (if needed)
+2. Re-train the model with `python top10/train.py` to use the new configuration
+
+**Note**: The training years and test year are configured in `top10/config.py`. You can modify `TRAINING_YEARS` (list of years) and `TEST_YEAR` (single year) to change which seasons are used for training and testing.
 
 ## Dependencies
 
