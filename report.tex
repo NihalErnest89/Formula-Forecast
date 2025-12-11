@@ -54,9 +54,10 @@
 \usepackage{nicefrac}       % compact symbols for 1/2, etc.
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
+\usepackage{graphicx}
 
 % Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote. 
-\title{Need For Predictions - Formula 1}
+\title{Formula Forecast}
 
 
 % The \author macro works with any number of authors. There are two commands
@@ -69,7 +70,7 @@
 
 
 \author{%
-  Nihal J. Ernest \\
+  Nihal Ernest \\
   University of California Santa Cruz\\
   Santa Cruz, CA 95064 \\
   \texttt{nernest@ucsc.edu} \\
@@ -113,26 +114,22 @@ Predicting Formula One race finishing positions is challenging due to the combin
 
 \subsection{Motivation}
 
-Formula One racing has long captivated audiences with its combination of cutting-edge engineering, exceptional driver skill, and unpredictable race outcomes. The 2025 season exemplified this unpredictability, featuring an intense three-way championship battle that generated widespread anticipation about which driver would prevail in the remaining races. This heightened interest in race outcomes highlights a fundamental challenge: accurately predicting Formula One finishing positions is remarkably difficult due to the complex interplay of numerous factors.
+Formula One racing combines cutting-edge engineering, exceptional driver skill, and unpredictable race outcomes. The 2024 season featured an intense championship battle that generated widespread anticipation about race outcomes, highlighting a fundamental challenge: accurately predicting finishing positions is remarkably difficult due to complex interactions between driver skill, car performance, track characteristics, weather conditions, strategic decisions, and unpredictable incidents such as collisions and mechanical failures.
 
-The variability in race results stems from a multitude of interconnected variables. Driver skill and experience vary significantly across the grid, with some drivers excelling at specific track types or in particular weather conditions. Car performance, determined by constructor engineering, aerodynamic design, and power unit capabilities, creates substantial performance differentials between teams. Track characteristics—from the tight confines of street circuits like Monaco to the high-speed straights of Monza—favor different car setups and driving styles. Weather conditions can dramatically alter race dynamics, with rain introducing additional unpredictability. Strategic decisions regarding tire compounds, pit stop timing, and fuel management further complicate predictions. Additionally, race incidents such as collisions, mechanical failures, and safety car deployments can instantly reshuffle the competitive order.
+Despite these challenges, accurate race predictions have significant real-world applications. Sports betting markets rely on predictive models to set odds and manage risk. Fantasy Formula One platforms enable fans to compete based on predicted driver performances. Teams and constructors can use predictions to inform strategic planning and race weekend preparation. Media and broadcasters leverage predictions to enhance race coverage and engage audiences.
 
-Despite these challenges, accurate race predictions have significant real-world applications. Sports betting markets rely on predictive models to set odds and manage risk. Fantasy Formula One platforms enable fans to compete based on predicted driver performances. Teams and constructors can use predictions to inform strategic planning, resource allocation, and race weekend preparation. Media and broadcasters leverage predictions to enhance race coverage and engage audiences. The ability to forecast competitive outcomes with reasonable accuracy would provide value across these domains.
+
 
 
 \subsection{Problem Statement}
 
-This work addresses the challenge of accurately predicting finishing positions for competitive Formula One drivers—specifically those who finish in the top 10 positions. Prior approaches have primarily focused on full-grid models or isolated performance metrics, facing several limitations that we address through targeted design choices.
+This work addresses the challenge of accurately predicting finishing positions for competitive Formula One drivers—specifically those who finish in the top 10 positions. Prior full-grid approaches suffer from signal dilution, as lower positions (11-20) are disproportionately affected by unpredictable events. We restrict our model to top-10 finishers and filter DNFs and extreme position drops (finish > grid + 6) to focus on skill- and strategy-driven performance.
 
-First, full-grid models suffer from signal dilution, as lower-finishing positions (11-20) are disproportionately affected by unpredictable events such as mechanical failures and collisions. By restricting our model to top-10 finishers only, we focus on drivers whose performance is primarily determined by skill, car capability, and race strategy rather than catastrophic incidents. We further filter out DNFs and extreme position drops (finish > grid + 6 positions) during training to prevent learning spurious patterns from unpredictable race events.
-
-Second, accurate prediction requires capturing multiple temporal and contextual dimensions of performance. Our feature engineering integrates nine complementary features: season-long trends (\textit{SeasonPoints}, \textit{SeasonStanding}, \textit{SeasonAvgFinish}), short-term momentum (\textit{RecentForm}), track-specific expertise (\textit{HistoricalTrackAvgPosition}), constructor performance (\textit{ConstructorStanding}, \textit{ConstructorTrackAvg}), starting position (\textit{GridPosition}), and track characteristics (\textit{TrackType}).
-
-Third, Formula One data exhibits strong temporal dependencies requiring careful validation. We employ time-aware k-fold cross-validation where each year serves as validation once, with training on all other years. This maintains strict year separation to prevent data leakage while providing comprehensive evaluation. The final model trains on all 2020-2024 data and validates on 2024.
-
-Finally, the relationship between features and finishing positions is inherently non-linear. We employ a deep feedforward neural network with three hidden layers [128, 64, 32] to learn complex feature interactions, using regularization (dropout, batch normalization, weight decay) to prevent overfitting.
+Our feature engineering integrates nine complementary features capturing season trends, recent momentum, track-specific expertise, constructor performance, starting position, and track characteristics. We employ time-aware k-fold cross-validation with strict year separation to prevent temporal data leakage, training on 2020-2024 and evaluating on 2025. A deep feedforward network with three hidden layers [128, 64, 32] captures non-linear feature interactions, using dropout, batch normalization, and weight decay for regularization.
 
 Formally, we frame this as a regression problem: given pre-race features for a driver, predict their continuous finishing position (1-10). The model achieves a mean absolute error of 1.585 positions on 2025 filtered test data, with 88.7\% of predictions within 3 positions of the actual result.
+
+
 
 \subsection{Key Contributions}
 
@@ -170,22 +167,22 @@ Our methodology revolves around isolating the predictable components of Formula 
 
 \subsection{Dataset}
 
-Race data was sourced from the fastf1 library in python and covers the 2020-2025 seasons. The 2020-2024 seasons form the training window, while 2025 was used as the unseen test set.
+Race data was sourced from the FastF1 library in python and covers the 2020-2025 seasons. The 2020-2024 seasons form the training window, while 2025 was used as the unseen test set.
 
-A large problem with predicting formula 1 races is that there are a lot of unpredictable parameters. Cars being damaged, racers crashing, crucial mistakes, etc. In order to improve our predictions we needed to remove such outliers. Thus, in order to remove noise, these filtering rules were applied:
+A large problem with predicting Formula One races is that there are a lot of unpredictable parameters. Cars being damaged, racers crashing, crucial mistakes, etc. In order to improve our predictions we needed to remove such outliers. Thus, in order to remove noise, these filtering rules were applied:
 
 \begin{enumerate}
-    \item All driver rows with a DNF, DNS, DSQ, NC were removed. (terminology for a racer not getting a place)
+    \item All driver rows with a DNF, DNS, DSQ, NC were removed.
     \item If there are missing positions the row is dropped.
-    \item Drivers who did particular poor--are 6 places lower than their starting grid position--in a race are considered outliers and the driver is removed from the dataset for that race. This would likely represent unpredictable errors such as crashes or damage.
-    \item Only racers in the top 10 positions are considered in training/testing. We're more focused on accurately predicting the top racers, and later racers don't have as much of an effect on the top positions. 
+    \item Drivers who placed 6 places lower than their starting grid position are considered outliers and are removed from the dataset for that race. This would likely represent unpredictable errors such as crashes or damage.
+    \item Only racers in the top 10 positions are considered in training.
 \end{enumerate}
 
-After cleaning we are then left with processing the data. Above were ways to deal with positions which are crucial for the prediction process, but then we are also left with missing values/outliers for the rest of the features, like season points, standing, average finish, etc.
+Processing data:
 
 \begin{enumerate}
     \item Feature value clipping: for each feature besides GridPosition, we clip outliers according to the 3-sigma rule to prevent extreme values from affecting training.
-    \item If there are missing values, we use value imputation using the column median or 0 if the median is NaN.
+    \item Impute missing values using the column median or 0 if the median is NaN.
 \end{enumerate}
 
 Final Dataset statistics:
@@ -210,11 +207,11 @@ To train our model, we used the following features:
     \item TrackType - binary (street circuit vs. purpose-built)
 \end{enumerate}
 
-All input features are normalized using StandardScaler to zero mean and unit variance. The scaler is fitted on the training set and applied to validation and test sets to prevent data leakage and maintain consistent scaling. This normalization ensures that features with different scales (e.g., SeasonPoints vs. TrackType) contribute equally to the model's learning process.
+All input features are normalized using StandardScaler to zero mean and unit variance. The scaler is fitted on the training set and applied to validation and test sets to prevent data leakage and so that features aren't weighted differently just because of their scaling.
 
 \subsection{Model Architecture}
 
-Our core predictive mechanism is a fully connected deep neural network designed to approximate a non-linear mapping from pre-race features to essentially ranking that represents how well the driver did in a race. We calculate this for each of the drivers in the test dataset and when testing/predicting, we rank them according to this score in order to predict the placements for that race.
+Our core predictive mechanism is a fully connected deep neural network that predicts a driver's ranking in a race. We calculate this for each of the drivers in the test dataset and when testing/predicting, we rank them according to this score in order to predict the placements for that race.
 
 We designed our network structure like so:
 
@@ -232,7 +229,7 @@ Something that may be glaring is the small parameter count for our network. Duri
 
 \subsection{Training Methodology}
 
-To train the model effectively, we introduce a new custom PositionAwareLoss, based on Huber loss. The loss combines a base Huber loss with an additional penalty proportional to the fraction of predictions that miss the exact target position after rounding. In otherwords, if a prediction is 2.4 and the exact output is 2, then we use normal loss since the output rounds down to 2. If the exact output were 3, then we would apply an additional penalty. This encourages the model to predict exact positions rather than merely being close, which is critical for F1 position prediction where exact ranking accuracy is important.
+To train the model effectively, we introduce a new custom PositionAwareLoss, based on Huber loss. The loss combines a base Huber loss with an additional penalty proportional to the fraction of predictions that miss the exact target position after rounding. In other words, if a prediction is 2.4 and the exact output is 2, then we use normal loss since the output rounds down to 2. If the exact output were 3, then we would apply an additional penalty. This encourages the model to predict exact positions rather than merely being close, which is critical for F1 position prediction where exact ranking accuracy is important.
 
 This model was trained using:
 \begin{itemize}
@@ -255,10 +252,10 @@ This model was trained using:
 We evaluate the model using several metrics suited to F1 position prediction.
 
 \begin{itemize}
-    \item Mean Absolute Error - This is the primary metric we use. It's especially useful for generally seeing how well our model is performing. Lower is better, an MAE of 1.6 represents being 1.6 positions away from the correct prediction. This provides an interpretable average error.
-    \item Root Mean Squared Error - Penalizes larger errors more than MAE in order to highlight cases where predictions are far from actual predictions and may indicate larger systematic issues.
+    \item Mean Absolute Error - This is the primary metric we use. An MAE of 1.6 represents being 1.6 positions away from the correct prediction.
+    \item Root Mean Squared Error - Penalizes larger errors more than MAE to highlight cases where predictions are far from actual predictions and may indicate larger systematic issues.
     \item R² score - Representing how much of the variance our model captures.
-    \item Position accuracy - Generally: within 1 placement, 2 placements, 3 placements, etc. This reflects practical utility. Sometimes it's good enough to know that predictions are occuring with an error of 1 or 2 placements.
+    \item Position accuracy - Within n placements. This reflects practical utility. Sometimes a prediction of within 1 placement is good enough.
 \end{itemize}
 
 \subsection{Cross-Validation Results}
@@ -271,12 +268,12 @@ We use a 5-fold time-aware cross-validation, with each fold using a different ye
   \label{tab:overall-metrics}
   \begin{tabular}{lccccccc}
     \toprule
-    Setting & MAE $\downarrow$ & RMSE $\downarrow$ & $R^2$ $\uparrow$ & Exact & $\leq$1 & $\leq$2 & $\leq$3 \\
+    Setting & MAE & RMSE & $R^2$ & Exact & $\leq$1 & $\leq$2 & $\leq$3 \\
     \midrule
     CV (avg, 5-fold)       & 1.764 & 2.216 & 0.4001 & 18.5\% & 33.9\% & 64.0\% & 83.7\% \\
     Validation 2024        & 1.562 & 1.965 & 0.5292 & 20.5\% & 37.3\% & 68.3\% & 87.6\% \\
-    Test 2025 (filtered)   & 1.585 & 1.998 & 0.5102 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
     Test 2025 (unfiltered) & 1.632 & 2.098 & 0.4665 & 20.0\% & 37.6\% & 70.0\% & 88.0\% \\
+    Test 2025 (filtered)   & 1.585 & 1.998 & 0.5102 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -285,32 +282,65 @@ We use a 5-fold time-aware cross-validation, with each fold using a different ye
 
 From Table~\ref{tab:overall-metrics}, the final model achieves a validation MAE of 1.562 positions on the 2024 season, with 87.6\% of predictions within three positions of the true finish. On the 2025 test set, our primary filtered evaluation (excluding DNFs and large position drops) yields an MAE of 1.585 and 88.7\% of predictions within three positions, while the unfiltered reference setting attains an MAE of 1.632 and 88.0\% within three. The modest gap between filtered and unfiltered performance indicates that, while extreme incidents slightly degrade accuracy, the model remains robust even when such outliers are retained.
 
+Figure~\ref{fig:prediction-scatter} visualizes the model's performance across all 2025 test races by plotting the average predicted position against each actual finishing position. Predictions are ranked within each race (raw model scores are converted to positions 1--10 based on relative ranking), reflecting how the model would be used in practice. The red trend line shows the average predicted rank for drivers who finished in each actual position, with error bars indicating the standard deviation. The line closely follows the perfect prediction diagonal (red dashed line) for positions 1--3, demonstrating strong accuracy for top finishers. For positions 4--10, the trend line remains below the diagonal, indicating that the model tends to predict slightly better positions than drivers actually achieve, which aligns with the competitive nature of F1 where small margins separate positions. The overall MAE of 1.585 positions across all test data confirms the model's strong predictive performance.
+
+
 \subsection{Feature Importance Analysis}
 
-During our development, we needed to determine what features were relevant to making accurate predictions and which ones were not. The problem is that that's not an trivial task to accomplish with neural networks, as you can't accurately determine how important a single feature is. The method we used to determine feature importance is by taking the trainin
+We estimate feature importance by analyzing weight distributions from the first layer of the trained network. While this method has limitations (features may interact synergistically), it provides insight into which inputs the model relies on most. The most heavily weighted features are GridPosition (0.148), RecentForm (0.116), and ConstructorStanding (0.115).
 
-  - Weight distribution from first layer
-  - Most important features: GridPosition (0.148), RecentForm (0.116), ConstructorStanding (0.115)
-  - Discussion of what this reveals about F1 performance factors
+These results align with Formula One's competitive dynamics: car performance (constructor standing) and starting position heavily influence outcomes, while recent form captures short-term momentum. Grid position's dominance suggests that finishing position is strongly correlated with starting position, reflecting the difficulty of overtaking in modern F1.
+
 
 \subsection{Comparison with Baseline}
-  - Improvement over full-grid model (if applicable)
-  - Top-10 focus improves MAE from 3.04 to 1.585
-  - Within 3 accuracy improves from 55.5\% to 88.7\%
+
+To contextualize the performance of our final top-10 model, we compare it against several baseline approaches in Table~\ref{tab:baseline-comparison}. All models are evaluated on the same 2025 test set, filtered to top-10 positions only, and use the same 9 features for fair comparison. The baselines include a top-20 neural network (trained on all positions but evaluated on top-10 subset) and a random forest regression model.
+
+\begin{table}[t]
+  \centering
+  \caption{Comparison of model variants on 2025 test data (top-10 positions only, filtered). All models use the same 9 features. Metrics are computed on the filtered test set excluding DNFs and large position drops.}
+  \label{tab:baseline-comparison}
+  \begin{tabular}{lccccc}
+    \toprule
+    Model & MAE & Exact & $\leq$1 & $\leq$2 & $\leq$3 \\
+    \midrule
+    Top-20 NN (top10 eval)  & 2.678 & 11.7\% & 30.2\% & 50.8\% & 67.3\% \\
+    Random Forest            & 1.751 & 14.9\% & 31.0\% & 62.9\% & 87.1\% \\
+    Top-10 NN (ours)         & 1.585 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The results demonstrate that our top-10 focused model achieves substantial improvements over baselines. Compared to the top-20 neural network evaluated on the top-10 subset, our model reduces MAE by 41\% (from 2.678 to 1.585) and increases within-three accuracy by 21 percentage points (from 67.3\% to 88.7\%). The random forest baseline performs better than the top-20 model but still falls short of our approach, with 10\% higher MAE and lower accuracy across all position tolerance thresholds. These gains highlight the importance of task-specific training and filtering strategies for F1 position prediction.
+
 
 \subsection{Error Analysis}
-  - Common failure cases
-  - Position-specific prediction accuracy
-  - Scatter plot analysis (predicted vs actual)
+
+To understand prediction patterns and systematic biases, we analyze error distribution across finishing positions. Figure~\ref{fig:prediction-scatter} visualizes model performance across all 2025 test races, plotting average predicted position against actual position. Predictions are ranked within each race (raw scores converted to positions 1--10), reflecting practical usage.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.8\textwidth]{images/prediction_scatter_top10.png}
+  \caption{Predicted versus actual finishing positions for all 2025 season test races (top-10 positions only). The red solid line shows the average predicted rank for each actual position, with error bars indicating one standard deviation. The red dashed line represents perfect prediction. Predictions are ranked within each race based on raw model scores.}
+  \label{fig:prediction-scatter}
+\end{figure}
+
+The analysis reveals three distinct patterns: (1) Top finishers (positions 1--3) are overpredicted (predicted worse than actual) with low variability, suggesting consistent underestimation of elite performance. (2) Mid-field positions (4--7) show the most accurate average predictions, closely tracking the perfect prediction line, though with increased variability. (3) Bottom positions (8--10) are underpredicted (predicted better than actual), indicating difficulty distinguishing drivers finishing near the bottom of the top-10, likely due to similar feature values or competitive margins.
+
+
+
 
 \section{Conclusion}
 
 This paper presents a focused and effective framework for predicting Formula One race outcomes by restricting the prediction task to the top-10 finishers and engineering features that capture the stable, competitive elements of driver and constructor performance. Our contributions include: formulating a top 10 prediction model that avoids noise from lower grid volatility, developing a comprehensive set of nine domain specific features capturing season trends, driver momentum, track-specific performance, and constructor strength, and implementing a time aware validation methodology that respects the chronological structure of Formula One seasons and ensures realistic generalization.
 
-- Key findings:
-  - Grid position and recent form are most predictive
-  - Top-10 focus significantly improves accuracy
-  - Model generalizes well to unseen seasons
+Key findings:
+\begin{itemize}
+    \item Grid position and recent form are most predictive
+    \item Top-10 focus significantly improves accuracy
+    \item Model generalizes well to unseen seasons
+\end{itemize}
+
 
 Despite these strengths, the work has several limitations. The model predicts only top-10 finishing positions and does not address the complete 20 driver grid. Important race level variables such as weather conditions, tire strategy, pit timing, and safety car interventions remain unmodeled due to inconsistent historical data availability. Furthermore, the dataset is limited to 2020–2024, constraining the diversity of scenarios the model encounters and potentially reducing robustness to future seasons.
 

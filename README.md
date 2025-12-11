@@ -1,455 +1,327 @@
-# F1 Predictions
+# F1 Race Position Prediction
 
-Predict F1 race finishing positions using deep learning neural networks based on driver performance features.
+Predict Formula One race finishing positions using deep neural networks based on driver performance features.
 
 ## Overview
 
-This project uses **neural networks** (deep learning) to predict F1 race finishing positions and ranks drivers to show the **predicted top 10 finishers**. The model is trained on historical F1 data and uses 7 carefully engineered features to capture driver performance, track history, and current form.
+This project uses **deep neural networks** to predict F1 race finishing positions, specifically focusing on **top-10 finishers**. The model is trained on historical F1 data (2020-2024) and uses 9 carefully engineered features to capture driver performance, track history, constructor competitiveness, and current form.
 
-### Base Features (9 features)
-- **Season Points**: Total points accumulated in the season
-- **Season Standing**: Driver's championship position (1 = leader, higher = worse)
-- **Season Average Finish Position**: Average finishing position this season
-- **Historical Track Average Position**: Driver's historical average position at the specific track
-- **Constructor Standing**: Constructor's championship position
-- **Constructor Track Average**: Constructor's average finish at this specific track
-- **Grid Position**: Average grid start position (season-specific average)
-- **Recent Form**: Average finish position in last 5 races (captures current momentum)
-- **Track Type**: Binary indicator (street circuit vs. permanent circuit)
+### Key Features
 
+- **Top-10 Focused Model**: Trained exclusively on competitive drivers (positions 1-10) for improved accuracy
+- **9 Domain-Specific Features**: Season trends, recent momentum, track expertise, constructor performance, grid position, and track characteristics
+- **Time-Aware Cross-Validation**: Prevents temporal data leakage with strict year separation
+- **Deep Neural Network Architecture**: 3-layer MLP (128→64→32 neurons) with regularization
 
-## Project Structure
+### Model Performance
 
-- `collect_data.py`: Script to pull F1 data from Fast F1 library and organize it into features/labels
-- `top10/`: Directory for top 10 finisher models (positions 1-10)
-  - `train.py`: Train neural network on top 10 finishers only
-  - `predict.py`: Predict top 10 finishers using the top 10 model
-- `top20/`: Directory for full grid models (positions 1-20)
-  - `train.py`: Train neural network on all 20 positions
-  - `predict.py`: Predict all 20 positions using the full grid model
-- `train.py`: Legacy training script (all 20 positions)
-- `train_rf.py`: Script to train a **Random Forest** (traditional ML approach for comparison)
-- `predict.py`: Legacy prediction script (all 20 positions)
-- `requirements.txt`: Python dependencies
-- `plan.md`: Project plan and objectives
+- **Mean Absolute Error**: 1.585 positions on 2025 filtered test data
+- **Within 3 positions**: 88.7% accuracy
+- **Within 2 positions**: 67.3% accuracy
+- **Within 1 position**: 37.9% accuracy
+- **Exact match**: 10.2% accuracy
 
-## Quick Start (Execution Order)
+## Quick Start
 
-Run these scripts in order:
+### Prerequisites
 
-1. **First time setup**: Install dependencies
+- Python 3.8 or higher
+- pip package manager
+
+### Installation
+
+1. **Clone the repository** (if applicable) or navigate to the project directory
+
+2. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Step 1**: Collect data
-   ```bash
-   python collect_data.py
-   ```
+### Running the Code
 
-3. **Step 2**: Train the model(s)
-   ```bash
-   # Train Top 10 Model (Recommended - focuses on competitive finishers)
-   python top10/train.py
-   
-   # Train Full Grid Model (All 20 positions)
-   python top20/train.py
-   
-   # Train Random Forest (Traditional ML - for comparison)
-   python train_rf.py
-   ```
+#### Step 1: Data Collection (Optional if data already exists)
 
-4. **Step 3**: Make predictions
-   ```bash
-   # Using Top 10 Model (Recommended - focuses on competitive finishers)
-   python top10/predict.py --input-file race_drivers.csv
-   
-   # Using Full Grid Model (All 20 positions)
-   python top20/predict.py --input-file race_drivers.csv
-   
-   # Using Random Forest
-   python predict.py --model-type random_forest --input-file race_drivers.csv
-   ```
+**Skip this step if the `data/` folder already contains `training_data.csv` and `test_data.csv`.**
 
-**Note**: After the first run, you only need to run steps 2 and 3 again if you want to retrain or make new predictions. The data collection (step 1) uses caching, so subsequent runs are much faster.
-
-## Setup
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Fast F1 uses caching. The cache directory will be created automatically when you run `collect_data.py`.
-   - **First run**: Will download data from Fast F1 API (may take some time)
-   - **Subsequent runs**: Will use cached data (much faster, no API calls)
-   - Cache is stored in the `cache/` directory
-
-## Usage
-
-### Step 1: Collect Data
-
-Run the data collection script to pull F1 data from Fast F1:
+If you need to collect data from scratch:
 
 ```bash
 python collect_data.py
 ```
 
 This will:
-- Collect data from 2022-2024 seasons for training
-- Collect data from 2025 season for testing
-- Calculate features (Season Points, Season Avg Finish, Historical Track Avg Position)
+- Download F1 data from the Fast F1 API (first run may take time)
+- Collect training data from 2020-2024 seasons
+- Collect test data from 2025 season
+- Calculate all 9 features for each driver-race combination
 - Save data to `data/training_data.csv` and `data/test_data.csv`
+- Cache API responses in `cache/` directory for faster subsequent runs
 
-### Step 2: Train Model(s)
+**Note**: Data collection uses caching. After the first run, subsequent runs are much faster as they use cached data.
 
-You can train either a Neural Network (deep learning) or Random Forest (traditional ML), or both for comparison:
+#### Step 2: Train the Model
 
-#### Option A: Top 10 Model (Recommended)
+Train the top-10 focused neural network model:
 
 ```bash
 python top10/train.py
 ```
 
 This will:
-- Load training and test data
-- Filter to top 10 finishers only (positions 1-10)
-- Train a deep neural network with multiple hidden layers
-- Use PyTorch with ReLU activations, dropout, and batch normalization
-- Train for multiple epochs with early stopping
+- Load training and test data from `data/` folder
+- Filter to top-10 finishers only (positions 1-10)
+- Filter out DNFs and extreme outliers (finish > grid + 6)
+- Train a deep neural network with time-aware k-fold cross-validation
 - Evaluate on validation and test sets
-- Display feature importances (from first layer weights)
+- Display training metrics and feature importances
 - Save the trained model to `models/f1_predictor_model_top10.pth`
-- Save results to `training_results_top10.json`
+- Save scaler to `models/scaler_top10.pkl`
+- Save results to `json/training_results_top10.json`
 - Generate training history plots
 
-**Architecture:**
-- Input: 9 features
-- Hidden layers: 128 → 64 → 32 neurons
-- Activation: ReLU
-- Regularization: Dropout (0.4) and Batch Normalization
-- Output: Single regression value (predicted finishing position 1-10)
-- Training: Only on drivers who finished in positions 1-10
+**Training Details**:
+- Architecture: Input (9 features) → Hidden [128, 64, 32] → Output (1 regression value)
+- Optimizer: Adam (learning rate 0.005)
+- Loss: PositionAwareLoss (Huber-based with exact position penalty)
+- Regularization: Dropout (0.4), Batch Normalization, Weight Decay (2e-4)
+- Training: 300 epochs with early stopping (patience 50)
+- Validation: Time-aware k-fold CV (5 folds, one per year: 2020-2024)
 
-#### Option B: Full Grid Model (All 20 Positions)
+#### Step 3: Make Predictions
+
+Use the trained model to predict race positions. There are two ways to run predictions:
+
+**Option A: Interactive Mode (Recommended for first-time users)**
+
+Simply run the prediction script without arguments:
 
 ```bash
-python top20/train.py
+python top10/predict.py
 ```
 
 This will:
-- Load training and test data
-- Train on all 20 positions
-- Train a deep neural network with multiple hidden layers
-- Use PyTorch with ReLU activations, dropout, and batch normalization
-- Train for multiple epochs with early stopping
-- Evaluate on validation and test sets
-- Display feature importances (from first layer weights)
-- Save the trained model to `models/f1_predictor_model.pth`
-- Save results to `training_results.json`
-- Generate training history plots
+- Load the trained model and test data
+- Prompt you to select a year from available options
+- Prompt you to select a specific race or type "all" (for 2025) to predict all races
+- Display predictions and save results to `predictions.csv`
 
-**Architecture:**
-- Input: 9 features
+**Option B: Command Line Arguments**
+
+Provide an input CSV file with driver features:
+
+```bash
+python top10/predict.py --input-file race_drivers.csv --output-file predictions.csv
+```
+
+**Input CSV Format** (`race_drivers.csv`):
+
+The input CSV should have **one row per driver** competing in the race, with the following columns:
+
+**Required columns (9 features)**:
+- `SeasonPoints`: Driver's total season points (float)
+- `SeasonStanding`: Driver's championship position (integer, 1 = leader)
+- `SeasonAvgFinish`: Driver's average finish position this season (float, lower is better)
+- `HistoricalTrackAvgPosition`: Driver's historical average at this track (float, lower is better)
+- `ConstructorStanding`: Constructor's championship position (integer, 1 = best)
+- `ConstructorTrackAvg`: Constructor's average finish at this track (float, lower is better)
+- `GridPosition`: Starting grid position from qualifying (integer, 1-20)
+- `RecentForm`: Average finish position in last 3 races (float, lower is better)
+- `TrackType`: Binary indicator (1 = street circuit, 0 = permanent circuit)
+
+**Optional columns** (for display purposes):
+- `DriverNumber`: Driver number
+- `DriverName`: Driver name
+
+**Example input file** (`race_drivers.csv`):
+```csv
+DriverNumber,DriverName,SeasonPoints,SeasonStanding,SeasonAvgFinish,HistoricalTrackAvgPosition,ConstructorStanding,ConstructorTrackAvg,GridPosition,RecentForm,TrackType
+44,HAM,150,2,3.5,4.2,1,2.8,3,3.0,0
+33,VER,180,1,2.1,3.8,1,2.8,1,2.3,0
+...
+```
+
+The prediction script will:
+1. Load the trained model and scaler
+2. Predict finishing position for each driver
+3. Rank all drivers by predicted position (lower score = better rank)
+4. Display the **top 10 predicted finishers**
+5. Save results to CSV file
+
+## Project Structure
+
+```
+.
+├── collect_data.py              # Data collection script (Fast F1 API)
+├── top10/                       # Top-10 focused model (main model)
+│   ├── train.py                 # Training script
+│   ├── predict.py               # Prediction script
+│   ├── config.py                # Configuration (features, years)
+│   ├── model_loader.py          # Model loading utilities
+│   └── feature_calculation.py  # Feature engineering
+├── top20/                       # Full grid model (baseline)
+│   ├── train.py
+│   └── predict.py
+├── top10_classification/        # Classification variant
+├── evaluation/                  # Evaluation scripts
+│   ├── evaluate_top10_metrics.py
+│   ├── evaluate_baseline_comparison.py
+│   └── generate_test_scatter_plot.py
+├── data/                        # Data files
+│   ├── training_data.csv        # Training data (2020-2024)
+│   ├── test_data.csv            # Test data (2025)
+│   └── metadata.json            # Data metadata
+├── models/                      # Trained models
+│   ├── f1_predictor_model_top10.pth
+│   ├── scaler_top10.pkl
+│   └── ...
+├── json/                        # Training results and metrics
+│   └── training_results_top10.json
+├── images/                      # Generated plots and figures
+│   └── prediction_scatter_top10.png
+├── cache/                       # Fast F1 API cache
+├── requirements.txt             # Python dependencies
+├── report.tex                   # Research paper (LaTeX)
+└── README.md                    # This file
+```
+
+## Feature Engineering
+
+The model uses 9 complementary features:
+
+1. **SeasonPoints**: Total points accumulated in the season
+2. **SeasonStanding**: Driver's championship position (1 = leader)
+3. **SeasonAvgFinish**: Average finishing position this season
+4. **HistoricalTrackAvgPosition**: Driver's historical average at the specific track
+5. **ConstructorStanding**: Constructor's championship position
+6. **ConstructorTrackAvg**: Constructor's average finish at this specific track
+7. **GridPosition**: Starting grid position from qualifying
+8. **RecentForm**: Average finish position in last 3 races (captures momentum)
+9. **TrackType**: Binary indicator (street circuit vs. permanent circuit)
+
+All features are normalized using StandardScaler (zero mean, unit variance) fitted on training data.
+
+## Model Architecture
+
+**Type**: Deep Feedforward Neural Network (Multi-Layer Perceptron)
+
+**Architecture**:
+- Input layer: 9 neurons (9 features)
 - Hidden layers: 128 → 64 → 32 neurons
+- Output layer: 1 neuron (regression, predicts finishing position)
 - Activation: ReLU
-- Regularization: Dropout (0.4) and Batch Normalization
-- Output: Single regression value (predicted finishing position 1-20)
+- Regularization:
+  - Dropout (0.4) after each hidden layer
+  - Batch Normalization after each hidden layer
+  - Weight Decay (L2 regularization, 2e-4)
+- Weight initialization: He/Kaiming initialization
+- Total parameters: ~44,161
 
-#### Option C: Random Forest (Traditional ML)
+**Loss Function**: PositionAwareLoss (Huber loss with additional penalty for exact position misses)
 
-```bash
-python train_rf.py
-```
+**Training**:
+- Optimizer: Adam (learning rate 0.005)
+- Learning rate scheduling: ReduceLROnPlateau
+- Batch size: 32
+- Epochs: 300 with early stopping (patience 50)
+- Validation: Time-aware k-fold cross-validation (5 folds, one per year)
 
-This will:
-- Load training and test data
-- Train a Random Forest classifier (100 trees)
-- Evaluate on validation and test sets
-- Display feature importances (from tree splits)
-- Save the trained model to `models/f1_predictor_model_rf.pkl`
-- Save results to `training_results_rf.json`
+## Data Collection Details
 
-**Why compare both?**
-- **Neural Network**: Deep learning approach with learnable weights, backpropagation, and non-linear activations
-- **Random Forest**: Traditional ensemble method, interpretable, fast training
-- Compare accuracy, training time, and feature importance interpretations
+The data collection script (`collect_data.py`) pulls data from the Fast F1 API and processes it into features:
 
-### Step 3: Make Predictions
+**Training Data**: 2020-2024 seasons (configured in `top10/config.py`)
+**Test Data**: 2025 season
 
-Use the trained model to predict race positions and get the **top 10 finishers**.
+**Data Processing**:
+- Calculates all 9 features for each driver-race combination
+- Ensures temporal ordering (no future data leakage)
+- Handles missing values and edge cases
+- Filters DNFs and extreme outliers during training
 
-**Predict top 10 from CSV file (recommended):**
-```bash
-# Top 10 Model (Recommended - focuses on competitive finishers)
-python top10/predict.py --input-file race_drivers.csv --output-file top10_predictions.csv
+**Caching**: Fast F1 uses local caching in the `cache/` directory. First run downloads data from API, subsequent runs use cached data (much faster).
 
-# Full Grid Model (All 20 positions)
-python top20/predict.py --input-file race_drivers.csv --output-file top20_predictions.csv
+## Evaluation
 
-# Random Forest (Legacy)
-python predict.py --model-type random_forest --input-file race_drivers.csv --output-file top10_predictions.csv
-```
+The model is evaluated using:
 
-**Input CSV format:**
-The input CSV should have **one row per driver** competing in the race, with columns:
+- **Mean Absolute Error (MAE)**: Average absolute difference between predicted and actual positions
+- **Root Mean Squared Error (RMSE)**: Penalizes larger errors more heavily
+- **R² Score**: Coefficient of determination
+- **Position Accuracy**: Percentage of predictions within 1, 2, or 3 positions of actual
 
-**Required columns (base features):**
-- `SeasonPoints`: Driver's season points
-- `SeasonStanding`: Driver's championship position (1 = leader, higher = worse)
-- `SeasonAvgFinish`: Driver's average finish position this season
-- `HistoricalTrackAvgPosition`: Driver's historical average at this track
-- `ConstructorStanding`: Constructor's championship standing (1 = best)
-- `ConstructorTrackAvg`: Constructor's average finish at this specific track
-- `GridPosition`: Starting grid position (qualifying position) or average grid position
-- `RecentForm`: Average finish position in last 5 races
-- `TrackType`: Binary (1 = street circuit, 0 = permanent circuit)
+Evaluation results are saved to `json/training_results_top10.json` and include:
+- Cross-validation metrics (average across 5 folds)
+- Final model validation metrics (2024)
+- Test set metrics (2025, filtered and unfiltered)
 
-**Optional columns:**
-- `DriverNumber`: Driver number (for display)
-- `DriverName`: Driver name (for display)
+## Output Files
 
+After training, the following files are generated:
 
-The script will:
-1. Predict finishing position for each driver
-2. Rank all drivers by predicted position
-3. Display the **top 10 finishers**
-4. Save results to CSV
+- `models/f1_predictor_model_top10.pth`: Trained PyTorch model
+- `models/scaler_top10.pkl`: Feature scaler (StandardScaler)
+- `models/label_encoder_top10.pkl`: Label encoder (if used)
+- `json/training_results_top10.json`: Detailed training metrics and evaluation results
+- `images/training_history_top10.png`: Training/validation loss curves
+- `images/prediction_scatter_top10.png`: Predicted vs actual positions scatter plot
 
-## Data Format
+## Troubleshooting
 
-### Training/Test Data
-The data collection script creates CSV files with the following columns:
-- `Year`: Season year
-- `EventName`: Track/race name
-- `RoundNumber`: Race round number
-- `SeasonPoints`: Total season points for the driver
-- `SeasonAvgFinish`: Average finish position this season
-- `HistoricalTrackAvgPosition`: Historical average position at this track
-- `DriverNumber`: Driver number (label)
-- `DriverName`: Driver abbreviation
-- `ActualPosition`: Actual finishing position
+### Data Collection Issues
 
-### Input Features for Prediction
-When using `predict.py`, provide a CSV with one row per driver containing:
+**Problem**: `collect_data.py` fails with API errors
+- **Solution**: The script includes retry logic. If errors persist, check your internet connection and try again later. Fast F1 API may be temporarily unavailable.
 
-**Base Features (Required):**
-- `SeasonPoints`: Float value
-- `SeasonStanding`: Integer (1 = leader, higher = worse)
-- `SeasonAvgFinish`: Float value (lower is better)
-- `HistoricalTrackAvgPosition`: Float value (lower is better)
-- `ConstructorStanding`: Integer (1 = best constructor, higher = worse)
-- `ConstructorTrackAvg`: Float value (constructor's average finish at this track, lower is better)
-- `GridPosition`: Integer (1-20, starting grid position from qualifying or average)
-- `RecentForm`: Float value (average finish in last 5 races, lower is better)
-- `TrackType`: Integer (1 = street circuit, 0 = permanent circuit)
+**Problem**: Data collection is slow
+- **Solution**: First run downloads data from API. Subsequent runs use cached data and are much faster. The cache is stored in `cache/` directory.
 
+### Training Issues
 
-## Model Details
+**Problem**: `FileNotFoundError: Training data not found`
+- **Solution**: Run `collect_data.py` first, or ensure `data/training_data.csv` exists.
 
-### Neural Network (Deep Learning)
+**Problem**: CUDA/GPU errors
+- **Solution**: The code automatically uses CPU if CUDA is not available. Training works on CPU but is slower.
 
-We used a **Multi-Layer Perceptron (MLP) neural network for regression** to predict F1 race finishing positions. Here's how we implemented it:
+### Prediction Issues
 
-#### 1. Problem Formulation
-- **Task**: Regression (predict finishing position 1–10 for top 10 model, 1–20 for full grid model)
-- **Input**: 
-  - **Top 10 Model**: 9 features per driver
-  - **Full Grid Model**: 9 features per driver
-- **Output**: Single continuous value (predicted finishing position)
+**Problem**: Model file not found
+- **Solution**: Train the model first using `python top10/train.py`
 
-#### 2. Architecture
+**Problem**: Feature mismatch errors
+- **Solution**: Ensure your input CSV contains all 9 required features with correct column names (case-sensitive).
 
-**Top 10 Model:**
-- **Type**: Feedforward neural network (MLP)
-- **Structure**:
-  - Input layer: 9 neurons (9 features)
-  - Hidden layers: 128 → 64 → 32 neurons
-  - Output layer: 1 neuron (regression)
-- **Activation**: ReLU (Rectified Linear Unit)
-- **Regularization**:
-  - Dropout (0.4) to reduce overfitting
-  - Batch normalization for stable training
-  - Weight decay (L2 regularization, 2e-4)
+## Configuration
 
-**Full Grid Model:**
-- **Type**: Feedforward neural network (MLP)
-- **Structure**:
-  - Input layer: 9 neurons (9 features)
-  - Hidden layers: 128 → 64 → 32 neurons
-  - Output layer: 1 neuron (regression)
-- **Activation**: ReLU (Rectified Linear Unit)
-- **Regularization**:
-  - Dropout (0.4) to reduce overfitting
-  - Batch normalization for stable training
-  - Weight decay (L2 regularization, 2e-4)
+Model configuration is centralized in `top10/config.py`:
 
-#### 3. Training
-- **Framework**: PyTorch
-- **Loss Function**: Huber loss (robust to outliers like DNFs/crashes)
-- **Optimizer**: Adam
-- **Learning Rate**: 0.001 with ReduceLROnPlateau scheduler
-- **Early Stopping**: Patience of 50 epochs
-- **Data**: 2020–2024 seasons (training), 2025 (test)
-- **Preprocessing**: StandardScaler (zero mean, unit variance)
+- `FEATURE_COLS`: List of 9 feature column names
+- `TRAINING_YEARS`: Years to use for training data (default: [2020, 2021, 2022, 2023, 2024])
+- `TEST_YEAR`: Year to use for test data (default: 2025)
 
-#### 4. Design Decisions
-- **Equal Weight Initialization**: First layer initialized to give equal importance to all features (~14.29% each)
-- **Gradient Clipping**: Max norm 1.0 to prevent exploding gradients
-- **Outlier Handling**: Huber loss and outlier clipping in preprocessing (3 standard deviations)
-- **Best Model Checkpointing**: Saves the best validation model during training
+Modify these values to change the training/test split or feature set.
 
-#### 5. Results
+## Dependencies
 
-**Top 10 Model:**
-- **Test MAE**: ~1.89 positions (on top 10 finishers)
-- **Within 1 position**: ~50-60% (varies by race)
-- **Within 2 positions**: ~70-80%
-- **Within 3 positions**: ~80-90%
-- **Exact winner prediction**: Strong performance on 2025 season races
+See `requirements.txt` for full list. Key dependencies:
 
-**Full Grid Model:**
-- **Test MAE**: ~3.13 positions (on all 20 positions)
-- **Within 1 position**: ~23%
-- **Within 3 positions**: ~61%
-- **R²**: ~0.46
+- `fastf1>=3.1.0`: F1 data API
+- `pandas>=2.0.0`: Data manipulation
+- `numpy>=1.24.0`: Numerical computing
+- `torch>=2.0.0`: Deep learning framework
+- `scikit-learn>=1.3.0`: Machine learning utilities
+- `matplotlib>=3.7.0`: Plotting
 
-#### 6. Why a Neural Network?
-- **Non-linear Relationships**: Captures complex interactions between features (e.g., how RecentForm interacts with TrackType)
-- **Feature Learning**: Learns which features matter most for different scenarios
-- **Scalability**: Easy to add features or adjust architecture
-- **Pattern Recognition**: Identifies subtle patterns in driver performance that linear models miss
-- **Top 10 Specialization**: Training only on top 10 finishers allows the model to focus on competitive drivers
+## License
 
-The model learns to weight features appropriately to predict where each driver will finish, accounting for non-linear relationships between driver performance, track history, recent form, and constructor competitiveness. The top 10 model specializes in predicting competitive finishers by training exclusively on top 10 data.
+[Add your license information here]
 
+## Citation
 
-## Output
+If you use this code in your research, please cite:
 
-- `data/`: Contains collected training and test data
-- `models/`: Contains trained models and scalers
-  - `f1_predictor_model_top10.pth`: Top 10 neural network model (PyTorch, 9 features)
-  - `scaler_top10.pkl`: Feature scaler for top 10 model
-  - `f1_predictor_model.pth`: Full grid neural network model (PyTorch, 9 features)
-  - `scaler.pkl`: Feature scaler for full grid model
-  - `f1_predictor_model_rf.pkl`: Random Forest model
-  - `scaler_rf.pkl`: Feature scaler for Random Forest
-- `training_results_top10.json`: Top 10 model training metrics and feature importances
-- `training_results.json`: Full grid model training metrics and feature importances
-- `training_results_rf.json`: Random Forest training metrics and feature importances
-- `training_history.png`: Training/validation MAE curves (neural network)
-- `prediction_scatter.png`: Predicted vs actual positions scatter plot (neural network)
-- `prediction_scatter_rf.png`: Predicted vs actual positions scatter plot (Random Forest)
+[Add citation information here]
 
-## Experimentation History
+## Contact
 
-This section documents experiments we've tried, what worked, and what didn't.
-
-### ✅ Implemented and Working
-
-#### 1. **Dataset Expansion (2020-2024)**
-- **What**: Expanded training data from 2022-2024 to 2020-2024
-- **Result**: ✅ **Improved performance** - Better generalization, more historical context
-- **Status**: Currently in use
-- **Impact**: More data points for driver-track combinations and constructor performance trends
-
-#### 2. **Batch Normalization**
-- **What**: Added batch normalization layers to stabilize training
-- **Result**: ✅ **Improved performance** - Beneficial even with small batch sizes (32)
-- **Status**: Currently in use
-- **Note**: Initially tested without batch norm due to concerns about small batch sizes, but results showed it helps
-
-#### 3. **K-Fold Cross-Validation Strategy (1 fold per year)**
-- **What**: Time-aware k-fold validation (one fold per year: 2020, 2021, 2022, 2023, 2024)
-- **Result**: ✅ **Optimal** - Tested 3 folds per year (splitting each year into thirds), but minimal gains didn't justify increased runtime
-- **Status**: Currently using 1 fold per year (5 folds total for 2020-2024)
-
-#### 4. **Early Stopping**
-- **What**: Added early stopping with patience of 50 epochs
-- **Result**: ✅ **Working** - Prevents overfitting and saves computation time
-- **Status**: Currently in use
-
-#### 5. **Feature Set (9 features)**
-- **What**: Current feature set includes:
-  - SeasonPoints, SeasonStanding, SeasonAvgFinish
-  - HistoricalTrackAvgPosition, ConstructorStanding, ConstructorTrackAvg
-  - GridPosition, RecentForm, TrackType
-- **Result**: ✅ **Working well** - Balanced feature set with good predictive power
-- **Status**: Currently in use
-- **Note**: Expanded from 7 to 9 features (added SeasonStanding and ConstructorTrackAvg)
-
-### ❌ Tested and Rejected
-
-#### 1. **ConstructorRecentForm Feature**
-- **What**: Added constructor's recent form (average finish of both drivers in last 5 races) as a new feature
-- **Result**: ❌ **Worse performance** - Actually decreased accuracy
-- **Reason**: Redundant with existing features:
-  - ConstructorStanding (championship position)
-  - ConstructorTrackAvg (track-specific performance)
-  - RecentForm (driver-specific, which already reflects car performance)
-- **Status**: Removed, not in current model
-
-#### 2. **Quick Wins (LR Warmup, GELU, Gradient Clipping)**
-- **What**: Tested learning rate warmup, GELU activation, and gradient clipping individually and combined
-- **Result**: ❌ **No improvement** - Baseline configuration was already optimal
-- **Status**: Not implemented
-- **Note**: Gradient clipping is still used (max norm 1.0) as it's a standard practice, but adding it didn't improve results
-
-### 🔄 In Progress / Under Testing
-
-#### 1. **Feature Normalization/Scaling Improvements**
-- **What**: Improved feature-specific normalization:
-  - SeasonPoints: Log transform + percentile rank (0-1 scale)
-  - GridPosition: Inverse transform (20 = best, 1 = worst) then normalize
-  - Position features: Ensure consistent 0-1 scaling
-- **Status**: 🔄 Testing in `top10/compare_feature_improvements.py`
-- **Hypothesis**: Better feature scaling will help model learn more effectively, especially for features with different scales
-
-#### 2. **Attention Mechanism**
-- **What**: Added attention mechanism to dynamically weight features based on context
-- **Status**: 🔄 Testing in `top10/compare_feature_improvements.py`
-- **Hypothesis**: Different features may be more important for different drivers/races (e.g., track-specific features more important at certain tracks)
-
-#### 3. **Feature Combining**
-- **What**: Combining similar features into composite features:
-  - ChampionshipStrength: SeasonPoints + SeasonStanding (60% points, 40% standing)
-  - TrackPerformance: HistoricalTrackAvgPosition + ConstructorTrackAvg (50/50)
-  - FormStrength: RecentForm + SeasonAvgFinish (70% recent, 30% average)
-- **Status**: 🔄 Testing in `top10/compare_feature_improvements.py`
-- **Hypothesis**: Reducing feature count while preserving information may improve model focus
-
-### 📊 Feature Importance Analysis
-
-Based on weight progression during training, current feature importances (normalized):
-- **GridPosition**: ~15.5-16% (highest - most important)
-- **ConstructorStanding**: ~11.5-12%
-- **RecentForm**: ~11.4%
-- **HistoricalTrackAvgPosition**: ~11.1%
-- **ConstructorTrackAvg**: ~12.3%
-- **SeasonAvgFinish**: ~10.4%
-- **SeasonPoints**: ~10.0%
-- **SeasonStanding**: ~9.7%
-- **TrackType**: ~9.8% (lowest)
-
-**Observations**:
-- GridPosition is overrepresented (may need rebalancing)
-- SeasonPoints + SeasonStanding combined (~20%) may be overrepresented
-- RecentForm and ConstructorTrackAvg may be underrepresented given their predictive value
-- These observations led to the current experiments in feature normalization and attention mechanisms
-
-### 🎯 Future Experiments to Consider
-
-1. **Recent Performance Features**: Replace cumulative stats (SeasonPoints) with recent performance (last 3-5 races)
-2. **Momentum Mismatch Feature**: Flag drivers with high cumulative stats but poor recent form
-3. **Feature-Specific Regularization**: Penalize over-reliance on certain features (e.g., SeasonPoints)
-4. **Separate Feature Pathways**: Different neural pathways for recent performance, track-specific, and baseline stats
-5. **Track-Specific Attention**: Increase track-specific feature weights for track-specific races
-
-### 📝 Notes on Experimentation Process
-
-- All experiments use time-aware k-fold cross-validation (one fold per year) to prevent data leakage
-- Comparisons are made against baseline using same validation strategy
-- Feature importance is tracked through first-layer weight analysis
-- Results are saved to JSON files for reproducibility
-- Scripts for comparisons are kept in `top10/` directory (e.g., `compare_feature_improvements.py`)
-
+[Add contact information here]
