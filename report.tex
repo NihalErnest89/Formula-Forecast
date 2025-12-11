@@ -1,0 +1,324 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2025
+
+% The authors should use one of these tracks.
+% Before accepting by the NeurIPS conference, select one of the options below.
+% 0. "default" for submission
+ \usepackage[preprint]{neurips_2025}
+% the "default" option is equal to the "main" option, which is used for the Main Track with double-blind reviewing.
+% 1. "main" option is used for the Main Track
+%  \usepackage[main]{neurips_2025}
+% 2. "position" option is used for the Position Paper Track
+%  \usepackage[position]{neurips_2025}
+% 3. "dandb" option is used for the Datasets & Benchmarks Track
+ % \usepackage[dandb]{neurips_2025}
+% 4. "creativeai" option is used for the Creative AI Track
+%  \usepackage[creativeai]{neurips_2025}
+% 5. "sglblindworkshop" option is used for the Workshop with single-blind reviewing
+ % \usepackage[sglblindworkshop]{neurips_2025}
+% 6. "dblblindworkshop" option is used for the Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop]{neurips_2025}
+
+% After being accepted, the authors should add "final" behind the track to compile a camera-ready version.
+% 1. Main Track
+ % \usepackage[main, final]{neurips_2025}
+% 2. Position Paper Track
+%  \usepackage[position, final]{neurips_2025}
+% 3. Datasets & Benchmarks Track
+ % \usepackage[dandb, final]{neurips_2025}
+% 4. Creative AI Track
+%  \usepackage[creativeai, final]{neurips_2025}
+% 5. Workshop with single-blind reviewing
+%  \usepackage[sglblindworkshop, final]{neurips_2025}
+% 6. Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop, final]{neurips_2025}
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote.
+% For workshops (5., 6.), the authors should add the name of the workshop, "\workshoptitle" command is used to set the workshop title.
+% \workshoptitle{WORKSHOP TITLE}
+
+% "preprint" option is used for arXiv or other preprint submissions
+ % \usepackage[preprint]{neurips_2025}
+
+% to avoid loading the natbib package, add option nonatbib:
+%    \usepackage[nonatbib]{neurips_2025}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote. 
+\title{Need For Predictions - Formula 1}
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+
+\author{%
+  Nihal J. Ernest \\
+  University of California Santa Cruz\\
+  Santa Cruz, CA 95064 \\
+  \texttt{nernest@ucsc.edu} \\
+  % examples of more authors
+  \And
+  Octavio Villalobos\\
+  University of California Santa Cruz\\
+  Santa Cruz, CA 95064 \\
+  \texttt{ocvillal@ucsc.edu} \\
+  \AND
+  Alexei Pelyushenko\\
+  University of California Santa Cruz\\
+  Santa Cruz, CA 95064 \\
+  \texttt{apelyush@ucsc.edu} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+}
+
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+Predicting Formula One race finishing positions is challenging due to the combined effects of driver skill, car performance, track characteristics, and short-term competitive momentum. This paper presents a deep neural network approach for predicting top-10 finishing positions, trained exclusively on competitive drivers who finish in positions 1-10. Our model utilizes 9 domain-specific features capturing season performance, recent form, historical track performance, and constructor competitiveness. Using time-aware k-fold cross-validation on data from 2020-2024 and evaluating on the 2025 season, we achieve a mean absolute error of 1.585 positions on the filtered test set, with 88.7\% of predictions within 3 positions of the actual result. This paper reviews related work in Formula One race prediction, details our dataset and feature engineering process, describes the neural network architecture and training methodology, and concludes with quantitative evaluation and discussion of key findings and limitations.
+\end{abstract} 
+
+
+\section{Introduction}
+
+\subsection{Motivation}
+
+Formula One racing has long captivated audiences with its combination of cutting-edge engineering, exceptional driver skill, and unpredictable race outcomes. The 2025 season exemplified this unpredictability, featuring an intense three-way championship battle that generated widespread anticipation about which driver would prevail in the remaining races. This heightened interest in race outcomes highlights a fundamental challenge: accurately predicting Formula One finishing positions is remarkably difficult due to the complex interplay of numerous factors.
+
+The variability in race results stems from a multitude of interconnected variables. Driver skill and experience vary significantly across the grid, with some drivers excelling at specific track types or in particular weather conditions. Car performance, determined by constructor engineering, aerodynamic design, and power unit capabilities, creates substantial performance differentials between teams. Track characteristics—from the tight confines of street circuits like Monaco to the high-speed straights of Monza—favor different car setups and driving styles. Weather conditions can dramatically alter race dynamics, with rain introducing additional unpredictability. Strategic decisions regarding tire compounds, pit stop timing, and fuel management further complicate predictions. Additionally, race incidents such as collisions, mechanical failures, and safety car deployments can instantly reshuffle the competitive order.
+
+Despite these challenges, accurate race predictions have significant real-world applications. Sports betting markets rely on predictive models to set odds and manage risk. Fantasy Formula One platforms enable fans to compete based on predicted driver performances. Teams and constructors can use predictions to inform strategic planning, resource allocation, and race weekend preparation. Media and broadcasters leverage predictions to enhance race coverage and engage audiences. The ability to forecast competitive outcomes with reasonable accuracy would provide value across these domains.
+
+
+\subsection{Problem Statement}
+
+This work addresses the challenge of accurately predicting finishing positions for competitive Formula One drivers—specifically those who finish in the top 10 positions. Prior approaches have primarily focused on full-grid models or isolated performance metrics, facing several limitations that we address through targeted design choices.
+
+First, full-grid models suffer from signal dilution, as lower-finishing positions (11-20) are disproportionately affected by unpredictable events such as mechanical failures and collisions. By restricting our model to top-10 finishers only, we focus on drivers whose performance is primarily determined by skill, car capability, and race strategy rather than catastrophic incidents. We further filter out DNFs and extreme position drops (finish > grid + 6 positions) during training to prevent learning spurious patterns from unpredictable race events.
+
+Second, accurate prediction requires capturing multiple temporal and contextual dimensions of performance. Our feature engineering integrates nine complementary features: season-long trends (\textit{SeasonPoints}, \textit{SeasonStanding}, \textit{SeasonAvgFinish}), short-term momentum (\textit{RecentForm}), track-specific expertise (\textit{HistoricalTrackAvgPosition}), constructor performance (\textit{ConstructorStanding}, \textit{ConstructorTrackAvg}), starting position (\textit{GridPosition}), and track characteristics (\textit{TrackType}).
+
+Third, Formula One data exhibits strong temporal dependencies requiring careful validation. We employ time-aware k-fold cross-validation where each year serves as validation once, with training on all other years. This maintains strict year separation to prevent data leakage while providing comprehensive evaluation. The final model trains on all 2020-2024 data and validates on 2024.
+
+Finally, the relationship between features and finishing positions is inherently non-linear. We employ a deep feedforward neural network with three hidden layers [128, 64, 32] to learn complex feature interactions, using regularization (dropout, batch normalization, weight decay) to prevent overfitting.
+
+Formally, we frame this as a regression problem: given pre-race features for a driver, predict their continuous finishing position (1-10). The model achieves a mean absolute error of 1.585 positions on 2025 filtered test data, with 88.7\% of predictions within 3 positions of the actual result.
+
+\subsection{Key Contributions}
+
+This work makes several key contributions to Formula One race prediction:
+
+\begin{itemize}
+    \item \textbf{Top-10 focused model}: By restricting training to competitive drivers (positions 1-10) and filtering unpredictable events, we achieve a mean absolute error of 1.585 positions, with 88.7\% of predictions within three positions, representing a substantial improvement over full-grid approaches.
+    
+    \item \textbf{Comprehensive feature engineering}: We systematically integrate nine complementary features capturing season-long trends, short-term momentum, track-specific expertise, constructor performance, and track characteristics, providing a holistic view of driver and car capabilities.
+    
+    \item \textbf{Time-aware validation methodology}: We employ k-fold cross-validation with strict year separation to prevent temporal data leakage while enabling comprehensive evaluation across all training years.
+    
+    \item \textbf{Deep neural network architecture}: We demonstrate that a carefully regularized feedforward network with three hidden layers effectively captures non-linear feature interactions for position prediction, achieving strong performance without requiring recurrent architectures.
+\end{itemize}
+
+
+\section{Related Work}
+
+Recent years have seen increasing adoption of machine learning techniques for Formula One (F1) performance prediction, including race outcome forecasting, lap time regression, and constructor-level analysis. Prior work consistently identifies grid position, constructor strength, and historical driver performance as dominant predictors of race outcomes.
+
+Urdhwareshe~\cite{urdhwareshe2025} proposed a machine learning framework using the TabNet architecture to predict both driver finishing positions and constructor championship points using historical F1 data from 2010--2023. Their system leverages structured pre-race features such as grid position, laps, constructor identity, and overtaking indicators, achieving an $R^2$ score of 0.75 for driver position prediction. While effective and interpretable, the model is trained on the full grid, where predictable back-marker behavior may dominate learning.
+
+Surendran~\cite{surendran2024} investigated the use of recurrent neural networks (LSTM and GRU) for predicting both driver and constructor rankings in Formula One using race data from 2019--2022. The study formulates F1 prediction as a time-series learning problem and evaluates model performance using MSE, RMSE, and MAE. Results show that LSTM consistently outperforms GRU in positional accuracy, while feature influence analysis identifies starting grid position and lap count as the most impactful variables in determining final race position.
+
+Zhao~\cite{zhao2024} applies a deep neural network (DNN) to qualifying lap-time prediction in Formula One using fastest-lap data from the post-2014 hybrid era. The work formulates the task as a non-linear regression problem and demonstrates that fully connected neural networks outperform traditional polynomial regression. However, the approach is limited to single-lap performance and does not incorporate race-level strategic dynamics.
+
+Jafri~\cite{jafri2024} presents a comprehensive machine learning framework for predicting both lap times and race outcomes using historical data from 2014--2023. The study compares classical models with deep LSTM architectures and introduces a composite loss combining lap-time error, position error, and historical performance. Results show that minimizing lap-time error alone does not guarantee accurate race outcome prediction.
+
+In contrast to prior work, which largely focuses on full grid prediction or isolated metrics such as lap time, our work targets  competitive dynamics by restricting training exclusively to top 10 finishers. Intuitively, lower-finishing positions (bottom 10 finishers) are disproportionately influenced by race incidents, DNFs, and mechanical failures, which introduce high variance and noise into the learning process. formulation enables the model to learn subtle performance differences among elite drivers without dilution from lower-grid variability. 
+
+
+\section{Methodology}
+
+Our methodology revolves around isolating the predictable components of Formula One performance while removing the high-variance noise caused by DNFs, major incidents, and driver errors. Rather than modeling the full grid, we restrict the task to the top-10 finishers and construct a dataset that represents these stable competitive dynamics. We train the model using a strictly time-aware validation scheme to model the chronological structure of F1 seasons. Drivers in the future use races from the past to learn and make decisions on how to drive. This design emphasizes realism and minimizes outliers and data leakage, ensuring that it learns overall performance patterns across races and not trying to predict unusual outcomes.
+
+\subsection{Dataset}
+
+Race data was sourced from the fastf1 library in python and covers the 2020-2025 seasons. The 2020-2024 seasons form the training window, while 2025 was used as the unseen test set.
+
+A large problem with predicting formula 1 races is that there are a lot of unpredictable parameters. Cars being damaged, racers crashing, crucial mistakes, etc. In order to improve our predictions we needed to remove such outliers. Thus, in order to remove noise, these filtering rules were applied:
+
+\begin{enumerate}
+    \item All driver rows with a DNF, DNS, DSQ, NC were removed. (terminology for a racer not getting a place)
+    \item If there are missing positions the row is dropped.
+    \item Drivers who did particular poor--are 6 places lower than their starting grid position--in a race are considered outliers and the driver is removed from the dataset for that race. This would likely represent unpredictable errors such as crashes or damage.
+    \item Only racers in the top 10 positions are considered in training/testing. We're more focused on accurately predicting the top racers, and later racers don't have as much of an effect on the top positions. 
+\end{enumerate}
+
+After cleaning we are then left with processing the data. Above were ways to deal with positions which are crucial for the prediction process, but then we are also left with missing values/outliers for the rest of the features, like season points, standing, average finish, etc.
+
+\begin{enumerate}
+    \item Feature value clipping: for each feature besides GridPosition, we clip outliers according to the 3-sigma rule to prevent extreme values from affecting training.
+    \item If there are missing values, we use value imputation using the column median or 0 if the median is NaN.
+\end{enumerate}
+
+Final Dataset statistics:
+
+- Training dataset: 720 samples
+
+- Testing dataset: 220 samples
+
+\subsection{Feature Engineering}
+
+To train our model, we used the following features:
+
+\begin{enumerate}
+    \item SeasonPoints - cumulative points in current season
+    \item SeasonStanding - current championship position
+    \item SeasonAvgFinish - average finishing position this season
+    \item HistoricalTrackAvgPosition - driver's historical average at this track
+    \item ConstructorStanding - constructor's championship position
+    \item ConstructorTrackAvg - constructor's historical average at this track
+    \item GridPosition - starting position for this race
+    \item RecentForm - average position in last 3 races
+    \item TrackType - binary (street circuit vs. purpose-built)
+\end{enumerate}
+
+All input features are normalized using StandardScaler to zero mean and unit variance. The scaler is fitted on the training set and applied to validation and test sets to prevent data leakage and maintain consistent scaling. This normalization ensures that features with different scales (e.g., SeasonPoints vs. TrackType) contribute equally to the model's learning process.
+
+\subsection{Model Architecture}
+
+Our core predictive mechanism is a fully connected deep neural network designed to approximate a non-linear mapping from pre-race features to essentially ranking that represents how well the driver did in a race. We calculate this for each of the drivers in the test dataset and when testing/predicting, we rank them according to this score in order to predict the placements for that race.
+
+We designed our network structure like so:
+
+\begin{itemize}
+    \item Input layer: 9 features
+    \item Hidden layers: [128, 64, 32] neurons
+    \item Activation function: ReLU
+    \item Regularization: Dropout (0.4), BatchNorm, Weight Decay (2e-4)
+    \item Output layer: Single regression value (placement)
+    \item Weights initialization: He/Kaiming
+    \item Total parameter count: 44,161
+\end{itemize}
+
+Something that may be glaring is the small parameter count for our network. During the training process, we saw that a small network worked, and larger networks were not justified by a better performance. This is most likely due to the fact that there is not much data to train on relatively. Adding a larger network for the most part would just be overfitting, so we kept to a smaller model.
+
+\subsection{Training Methodology}
+
+To train the model effectively, we introduce a new custom PositionAwareLoss, based on Huber loss. The loss combines a base Huber loss with an additional penalty proportional to the fraction of predictions that miss the exact target position after rounding. In otherwords, if a prediction is 2.4 and the exact output is 2, then we use normal loss since the output rounds down to 2. If the exact output were 3, then we would apply an additional penalty. This encourages the model to predict exact positions rather than merely being close, which is critical for F1 position prediction where exact ranking accuracy is important.
+
+This model was trained using:
+\begin{itemize}
+    \item Optimizer: Adam (learning rate 0.005)
+    \item Learning rate scheduling: ReduceLROnPlateau
+    \item Batch size: 32
+    \item Epochs: 300 with early stopping (patience 50)
+    \item Validation strategy: Time-aware k-fold cross-validation
+    \begin{itemize}
+        \item 5 folds (one per year: 2020-2024)
+        \item Prevents temporal data leakage
+    \end{itemize}
+    \item Final model: trained on all 2020-2024 data, validated on 2024
+\end{itemize}
+
+\section{Evaluation}
+
+\subsection{Evaluation Metrics}
+
+We evaluate the model using several metrics suited to F1 position prediction.
+
+\begin{itemize}
+    \item Mean Absolute Error - This is the primary metric we use. It's especially useful for generally seeing how well our model is performing. Lower is better, an MAE of 1.6 represents being 1.6 positions away from the correct prediction. This provides an interpretable average error.
+    \item Root Mean Squared Error - Penalizes larger errors more than MAE in order to highlight cases where predictions are far from actual predictions and may indicate larger systematic issues.
+    \item R² score - Representing how much of the variance our model captures.
+    \item Position accuracy - Generally: within 1 placement, 2 placements, 3 placements, etc. This reflects practical utility. Sometimes it's good enough to know that predictions are occuring with an error of 1 or 2 placements.
+\end{itemize}
+
+\subsection{Cross-Validation Results}
+
+We use a 5-fold time-aware cross-validation, with each fold using a different year as the validation set to prevent temporal leakage. Table~\ref{tab:overall-metrics} summarizes the average cross-validation performance, the final model's validation performance on 2024, and the 2025 test set results under both filtered and unfiltered settings.
+
+\begin{table}[t]
+  \centering
+  \caption{Top-10 model performance on validation and test sets. The filtered test set excludes DNFs and large position drops (finish $>$ grid + 6), while the unfiltered set retains all non-DNF entries.}
+  \label{tab:overall-metrics}
+  \begin{tabular}{lccccccc}
+    \toprule
+    Setting & MAE $\downarrow$ & RMSE $\downarrow$ & $R^2$ $\uparrow$ & Exact & $\leq$1 & $\leq$2 & $\leq$3 \\
+    \midrule
+    CV (avg, 5-fold)       & 1.764 & 2.216 & 0.4001 & 18.5\% & 33.9\% & 64.0\% & 83.7\% \\
+    Validation 2024        & 1.562 & 1.965 & 0.5292 & 20.5\% & 37.3\% & 68.3\% & 87.6\% \\
+    Test 2025 (filtered)   & 1.585 & 1.998 & 0.5102 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
+    Test 2025 (unfiltered) & 1.632 & 2.098 & 0.4665 & 20.0\% & 37.6\% & 70.0\% & 88.0\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Final Model Performance}
+
+From Table~\ref{tab:overall-metrics}, the final model achieves a validation MAE of 1.562 positions on the 2024 season, with 87.6\% of predictions within three positions of the true finish. On the 2025 test set, our primary filtered evaluation (excluding DNFs and large position drops) yields an MAE of 1.585 and 88.7\% of predictions within three positions, while the unfiltered reference setting attains an MAE of 1.632 and 88.0\% within three. The modest gap between filtered and unfiltered performance indicates that, while extreme incidents slightly degrade accuracy, the model remains robust even when such outliers are retained.
+
+\subsection{Feature Importance Analysis}
+
+During our development, we needed to determine what features were relevant to making accurate predictions and which ones were not. The problem is that that's not an trivial task to accomplish with neural networks, as you can't accurately determine how important a single feature is. The method we used to determine feature importance is by taking the trainin
+
+  - Weight distribution from first layer
+  - Most important features: GridPosition (0.148), RecentForm (0.116), ConstructorStanding (0.115)
+  - Discussion of what this reveals about F1 performance factors
+
+\subsection{Comparison with Baseline}
+  - Improvement over full-grid model (if applicable)
+  - Top-10 focus improves MAE from 3.04 to 1.585
+  - Within 3 accuracy improves from 55.5\% to 88.7\%
+
+\subsection{Error Analysis}
+  - Common failure cases
+  - Position-specific prediction accuracy
+  - Scatter plot analysis (predicted vs actual)
+
+\section{Conclusion}
+
+This paper presents a focused and effective framework for predicting Formula One race outcomes by restricting the prediction task to the top-10 finishers and engineering features that capture the stable, competitive elements of driver and constructor performance. Our contributions include: formulating a top 10 prediction model that avoids noise from lower grid volatility, developing a comprehensive set of nine domain specific features capturing season trends, driver momentum, track-specific performance, and constructor strength, and implementing a time aware validation methodology that respects the chronological structure of Formula One seasons and ensures realistic generalization.
+
+- Key findings:
+  - Grid position and recent form are most predictive
+  - Top-10 focus significantly improves accuracy
+  - Model generalizes well to unseen seasons
+
+Despite these strengths, the work has several limitations. The model predicts only top-10 finishing positions and does not address the complete 20 driver grid. Important race level variables such as weather conditions, tire strategy, pit timing, and safety car interventions remain unmodeled due to inconsistent historical data availability. Furthermore, the dataset is limited to 2020–2024, constraining the diversity of scenarios the model encounters and potentially reducing robustness to future seasons.
+
+Several promising directions exist for future work. Incorporating weather data, tire strategy indicators, and incident likelihood could significantly enhance predictive power. Extending the model to full grid prediction would enable broader applications in fantasy platforms and betting markets. Real time race prediction—integrating lap-by-lap data, pace deltas, and evolving race conditions pose as exciting possible advances. Finally, exploring ensemble architectures or hybrid systems that combine neural networks with gradient-boosted decision trees may capture complementary patterns and further reduce positional error.
+
+
+% \section*{References}
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

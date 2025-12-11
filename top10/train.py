@@ -581,8 +581,11 @@ def main():
     print("\nLoading data...")
     training_df, test_df, metadata = load_data()
     
-    # Verify that training data includes expected years (2020-2024)
-    expected_years = {2020, 2021, 2022, 2023, 2024}
+    # Import training years from config
+    from config import TRAINING_YEARS
+    
+    # Verify that training data includes expected years
+    expected_years = set(TRAINING_YEARS)
     actual_years = set(training_df['Year'].unique()) if 'Year' in training_df.columns else set()
     
     if not expected_years.issubset(actual_years):
@@ -593,12 +596,12 @@ def main():
         print(f"Expected years: {sorted(expected_years)}")
         print(f"Actual years in data: {sorted(actual_years)}")
         print(f"Missing years: {sorted(missing_years)}")
-        print(f"\nThe data needs to be regenerated with the expanded dataset (2020-2024).")
+        print(f"\nThe data needs to be regenerated with the expanded dataset ({TRAINING_YEARS}).")
         print(f"Please run: python collect_data.py")
         print(f"{'='*70}\n")
         raise ValueError(
             f"Training data missing years: {sorted(missing_years)}. "
-            f"Please run 'python collect_data.py' to regenerate data with years 2020-2024."
+            f"Please run 'python collect_data.py' to regenerate data with years {TRAINING_YEARS}."
         )
     
     print(f"Training samples: {len(training_df)}")
@@ -610,10 +613,10 @@ def main():
     # and "Within 3" accuracy from 55.5% to 79.1%
     print("\nPreparing training data (top 10 positions only)...")
     
-    # TIME-AWARE K-FOLD CROSS-VALIDATION: Use all 2020-2024 for training/validation
+    # TIME-AWARE K-FOLD CROSS-VALIDATION: Use all training years for training/validation
     # Split by year to prevent data leakage (time-series data)
     print("\nUsing K-Fold Cross-Validation (Time-Aware) for validation...")
-    print("  This allows us to use all training years (2020-2024) for validation")
+    print(f"  This allows us to use all training years ({TRAINING_YEARS}) for validation")
     print("  while still respecting temporal order (no future data leakage)")
     
     def k_fold_time_based_split(df, n_splits=None):
@@ -640,7 +643,7 @@ def main():
         return folds
     
     # Perform k-fold cross-validation
-    # Use one fold per year (5 folds for 2020-2024)
+    # Use one fold per year
     years_in_data = sorted(training_df['Year'].unique())
     n_splits = len(years_in_data)  # One fold per year
     print(f"  Training years available: {years_in_data}")
@@ -768,8 +771,8 @@ def main():
     print(f"    Within 3 positions: {avg_val_w3:.1f}%")
     
     # Use the model from the last fold (trained on all years except the last validation year)
-    # Or train a final model on ALL training data (2020-2024)
-    print(f"\nTraining final model on ALL training data (2020-2024)...")
+    # Or train a final model on ALL training data
+    print(f"\nTraining final model on ALL training data ({TRAINING_YEARS})...")
     X_train_all, y_train_all, _, train_stats, feature_names = prepare_features_and_labels(
         training_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
     )
@@ -917,7 +920,7 @@ def main():
     print("\n" + "=" * 60)
     print("Final Model Evaluation on Validation Set (2024)")
     print("=" * 60)
-    print("Note: This is the final model trained on ALL training data (2020-2024)")
+    print(f"Note: This is the final model trained on ALL training data ({TRAINING_YEARS})")
     print("      Cross-validation results above show average performance across all folds")
     
     val_dataset = F1Dataset(X_val_split, y_val_split)

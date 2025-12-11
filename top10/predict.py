@@ -14,7 +14,7 @@ import sys
 # Import from refactored modules
 sys.path.insert(0, str(Path(__file__).parent))
 
-from constants import FEATURE_COLS
+from config import FEATURE_COLS
 from evaluation import get_status, calculate_filtered_accuracy
 from model_loader import F1NeuralNetwork, load_model, make_predictions, handle_nan_values
 from feature_calculation import (
