@@ -1,9 +1,7 @@
 # Fast F1 cache directory (can get large)
 cache/
 
-# Data directory (training/test data - contains sensitive race data)
-data/
-*.csv
+
 !requirements.txt
 
 # Model files (trained models - can be regenerated)
