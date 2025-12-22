@@ -213,7 +213,7 @@ All input features are normalized using StandardScaler to zero mean and unit var
 
 Our core predictive mechanism is a fully connected deep neural network that predicts a driver's ranking in a race. We calculate this for each of the drivers in the test dataset and when testing/predicting, we rank them according to this score in order to predict the placements for that race.
 
-We designed our network structure like so:
+The network architecture is structured as the following:
 
 \begin{itemize}
     \item Input layer: 9 features
@@ -225,7 +225,7 @@ We designed our network structure like so:
     \item Total parameter count: 44,161
 \end{itemize}
 
-Something that may be glaring is the small parameter count for our network. During the training process, we saw that a small network worked, and larger networks were not justified by a better performance. This is most likely due to the fact that there is not much data to train on relatively. Adding a larger network for the most part would just be overfitting, so we kept to a smaller model.
+One attribute that may stand out is the small parameter count for our network. During the training process, we saw that a small network worked, and larger networks were not justified by a better performance. This is most likely due to the fact that there is not much data to train on relatively. Adding a larger network for the most part would just be overfitting, so we kept to a smaller model.
 
 \subsection{Training Methodology}
 
@@ -244,6 +244,8 @@ This model was trained using:
     \end{itemize}
     \item Final model: trained on all 2020-2024 data, validated on 2024
 \end{itemize}
+
+Trained models are available at: \href{https://drive.google.com/drive/folders/11P59rYOIyxDgdLGXGs8Tl7WMRHOJ-iar?usp=sharing}{Google Drive}.
 
 \section{Evaluation}
 
@@ -306,7 +308,7 @@ To contextualize the performance of our final top-10 model, we compare it agains
     \midrule
     Top-20 NN (top10 eval)  & 2.678 & 11.7\% & 30.2\% & 50.8\% & 67.3\% \\
     Random Forest            & 1.751 & 14.9\% & 31.0\% & 62.9\% & 87.1\% \\
-    Top-10 NN (ours)         & 1.585 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
+    Top-10 NN         & 1.585 & 20.2\% & 37.9\% & 70.6\% & 88.7\% \\
     \bottomrule
   \end{tabular}
 \end{table}
