@@ -690,6 +690,12 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             if pd.isna(hist_track_avg):
                 hist_track_avg = 10.0  # Default for rookies at this track
             
+            # Store actual grid position from this race before calculating average
+            actual_grid_position = race.get('GridPosition', np.nan)
+            if pd.isna(actual_grid_position):
+                # Try alternative column names
+                actual_grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+            
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
             # Using season-specific average (only races from current season before current round)
@@ -697,10 +703,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             
             # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
-                grid_position = race.get('GridPosition', np.nan)
-                if pd.isna(grid_position):
-                    # Try alternative column names
-                    grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+                grid_position = actual_grid_position
             
             # Recent form (last 5 races average finish) - captures current momentum
             if round_num == 1:
@@ -823,6 +826,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'ConstructorStanding': driver_constructor_standing,
                 'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
                 'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
+                'ActualGridPosition': actual_grid_position,  # Actual grid position from qualifying for this race
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
                 'TrackType': track_type,  # 1 = street circuit, 0 = permanent
@@ -901,6 +905,12 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             if pd.isna(hist_track_avg):
                 hist_track_avg = 10.0  # Default for rookies at this track
             
+            # Store actual grid position from this race before calculating average
+            actual_grid_position = race.get('GridPosition', np.nan)
+            if pd.isna(actual_grid_position):
+                # Try alternative column names
+                actual_grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+            
             # Get starting grid position - use AVERAGE grid position instead of actual
             # This matches what we'll use for future race predictions and eliminates train/test mismatch
             # For test data, we calculate average from training data + previous test races
@@ -917,10 +927,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
             
             # Fallback: if no historical data, use actual grid position from this race
             if pd.isna(grid_position):
-                grid_position = race.get('GridPosition', np.nan)
-                if pd.isna(grid_position):
-                    # Try alternative column names
-                    grid_position = race.get('StartingGrid', race.get('Grid', np.nan))
+                grid_position = actual_grid_position
             
             # Recent form (last 5 races average finish) - captures current momentum
             if round_num == 1:
@@ -1043,6 +1050,7 @@ def organize_data(training_years: List[int], test_year: int) -> Tuple[pd.DataFra
                 'ConstructorStanding': driver_constructor_standing,
                 'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
                 'GridPosition': grid_position,  # Average grid position (matches future prediction scenario)
+                'ActualGridPosition': actual_grid_position,  # Actual grid position from qualifying for this race
                 'RecentForm': driver_recent_form,  # Last 5 races average finish (current momentum)
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
                 'TrackType': track_type,  # 1 = street circuit, 0 = permanent
