@@ -116,7 +116,7 @@ def get_races():
         all_future = pd.concat(future_races_list, ignore_index=True)
         all_races = pd.concat([all_races, all_future], ignore_index=True)
     
-    all_races = all_races.sort_values(['Year', 'RoundNumber'])
+    all_races = all_races.sort_values(['Year', 'RoundNumber'], ascending=[False, False])
     
     # Check which races are future (no data in test_df)
     races_list = []

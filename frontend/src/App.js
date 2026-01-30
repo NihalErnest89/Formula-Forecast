@@ -2,39 +2,31 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 import { getCircuitImage } from './circuitImages';
+import { getTeamColor, getDriverImage } from './driverData';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 function App() {
   const [races, setRaces] = useState([]);
+  const [filteredRaces, setFilteredRaces] = useState([]);
+  const [selectedYear, setSelectedYear] = useState(null);
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(null);
-  const [filteredRaces, setFilteredRaces] = useState([]);
   const [showFiltered, setShowFiltered] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const fetchRaces = useCallback(async () => {
     try {
-      setLoading(true);
       const response = await axios.get(`${API_BASE_URL}/api/races`);
-      const sortedRaces = response.data.races.sort((a, b) => {
-        if (a.year !== b.year) return b.year - a.year;
-        return b.roundNumber - a.roundNumber;
-      });
-      setRaces(sortedRaces);
-      setSelectedYear(prevYear => {
-        if (!prevYear && sortedRaces.length > 0) {
-          return sortedRaces[0].year;
-        }
-        return prevYear;
-      });
+      // API returns {races: [...]}, so extract the races array
+      const racesData = response.data?.races || (Array.isArray(response.data) ? response.data : []);
+      setRaces(racesData);
     } catch (err) {
-      setError('Failed to load races. Make sure the backend API is running.');
-      console.error(err);
-    } finally {
-      setLoading(false);
+      console.error('Error fetching races:', err);
+      setError('Failed to load races');
+      setRaces([]); // Set to empty array on error
     }
   }, []);
 
@@ -43,13 +35,27 @@ function App() {
   }, [fetchRaces]);
 
   useEffect(() => {
-    if (selectedYear) {
-      const filtered = races.filter(race => race.year === selectedYear);
-      setFilteredRaces(filtered);
-    } else {
-      setFilteredRaces(races);
+    // Ensure races is always an array
+    if (!Array.isArray(races)) {
+      setFilteredRaces([]);
+      return;
     }
-  }, [selectedYear, races]);
+    
+    let filtered = races;
+    
+    if (selectedYear) {
+      filtered = filtered.filter(race => race.year === selectedYear);
+    }
+    
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(race => 
+        race.eventName && race.eventName.toLowerCase().includes(query)
+      );
+    }
+    
+    setFilteredRaces(filtered);
+  }, [selectedYear, races, searchQuery]);
 
   const handleRaceSelect = async (race) => {
     try {
@@ -72,7 +78,15 @@ function App() {
     }
   };
 
-  const uniqueYears = [...new Set(races.map(r => r.year))].sort((a, b) => b - a);
+  const handleClearSelection = () => {
+    setSelectedRace(null);
+    setPredictions(null);
+    setShowFiltered(false);
+  };
+
+  const uniqueYears = Array.isArray(races) 
+    ? [...new Set(races.map(r => r.year).filter(Boolean))].sort((a, b) => b - a)
+    : [];
 
   return (
     <div className="App">
@@ -89,14 +103,21 @@ function App() {
         )}
 
         <div className={`race-selector ${predictions ? 'minimized' : ''}`}>
-          <h2>{predictions ? 'Races' : 'Select a Race'}</h2>
+          <div className="race-selector-header">
+            <h2>{predictions ? 'Races' : 'Select a Race'}</h2>
+            {predictions && (
+              <button className="clear-selection-btn" onClick={handleClearSelection}>
+                &times;
+              </button>
+            )}
+          </div>
           
           {uniqueYears.length > 0 && (
             <div className="year-filter">
               <label>Year:</label>
               <select 
                 value={selectedYear || ''} 
-                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                onChange={(e) => setSelectedYear(e.target.value ? parseInt(e.target.value) : null)}
               >
                 <option value="">All</option>
                 {uniqueYears.map(year => (
@@ -106,18 +127,25 @@ function App() {
             </div>
           )}
 
+          {!predictions && (
+            <div className="search-filter">
+              <input
+                type="text"
+                placeholder="Search races..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          )}
+
           <div className="races-list">
             {loading && races.length === 0 ? (
               <div className="loading">Loading races...</div>
             ) : filteredRaces.length === 0 ? (
-              <div className="no-races">No races available</div>
+              <div className="no-races">No races found</div>
             ) : (
               filteredRaces.map((race, idx) => {
                 const circuitImage = getCircuitImage(race.eventName);
-                // Debug: log if image not found
-                if (!circuitImage && race.eventName) {
-                  console.log(`No image found for: "${race.eventName}"`);
-                }
                 return (
                   <button
                     key={`${race.year}-${race.roundNumber}-${idx}`}
@@ -137,7 +165,7 @@ function App() {
                         {race.isFuture && <span className="future-badge">F</span>}
                       </span>
                     </div>
-                    {circuitImage && <div className="race-button-image"></div>}
+                    {circuitImage && !predictions && <div className="race-button-image"></div>}
                   </button>
                 );
               })
@@ -160,6 +188,7 @@ function App() {
                 {predictions.race.year} - Round {predictions.race.roundNumber}
                 {predictions.race.isFuture && <span className="future-badge">Future Race</span>}
               </p>
+              
               {!predictions.race.isFuture && (
                 <div className="filter-toggle">
                   <label className="filter-checkbox-label tooltip-trigger">
@@ -189,9 +218,7 @@ function App() {
               
               {(showFiltered ? predictions.predictionsFiltered : predictions.predictionsUnfiltered).map((pred, idx) => {
                 const hasActual = pred.actualPosition !== null && pred.actualPosition !== undefined;
-                // Use sequential rank for display when filtered, original rank for error calculation
                 const displayRank = showFiltered ? idx + 1 : pred.rank;
-                // For filtered view, compare display rank to actual; for unfiltered, use original rank
                 const error = hasActual ? Math.abs(displayRank - pred.actualPosition) : null;
                 const errorClass = hasActual && !pred.isFiltered ? (
                   error === 0 ? 'exact' : 
@@ -199,22 +226,66 @@ function App() {
                   error <= 2 ? 'fair' : 'poor'
                 ) : null;
                 const isFiltered = pred.isFiltered || false;
+                const teamColor = getTeamColor(pred.constructor);
                 
                 return (
-                  <div 
-                    key={idx} 
+                  <div
+                    key={idx}
                     className={`prediction-row ${idx === 0 ? 'podium-gold' : idx === 1 ? 'podium-silver' : idx === 2 ? 'podium-bronze' : ''}`}
+                    style={{ animationDelay: `${idx * 0.05}s` }}
                   >
                     <div className="col-rank">
                       <span className={`rank-number ${idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : 'neutral'}`}>
                         {displayRank}
                       </span>
                     </div>
-                    <div className="col-driver">
+                    <div className="col-driver driver-row-with-image"
+                      style={{
+                        '--team-color': teamColor.primary,
+                        '--team-color-secondary': teamColor.secondary
+                      }}
+                    >
                       <span className="driver-name">{pred.driverName}</span>
                       {pred.constructor && (
                         <span className="constructor">{pred.constructor}</span>
                       )}
+                      <div className="driver-row-image">
+                        {(() => {
+                          const driverImg = getDriverImage(pred.driverName);
+                          console.log('Driver:', pred.driverName, 'Image URL:', driverImg);
+                          if (driverImg) {
+                            return (
+                              <>
+                                <img 
+                                  src={driverImg} 
+                                  alt={pred.driverName}
+                                  className="driver-face-image"
+                                  onLoad={() => console.log('Image loaded:', pred.driverName)}
+                                  onError={(e) => {
+                                    console.error('Image failed to load:', driverImg, 'for driver:', pred.driverName);
+                                    e.target.style.display = 'none';
+                                    const fallback = e.target.nextElementSibling;
+                                    if (fallback) fallback.style.display = 'flex';
+                                  }}
+                                />
+                                <div 
+                                  className="driver-row-number" 
+                                  data-driver={pred.driverName}
+                                  style={{ display: 'none' }}
+                                >
+                                  {pred.driverNumber || '?'}
+                                </div>
+                              </>
+                            );
+                          }
+                          console.log('No image found for:', pred.driverName);
+                          return (
+                            <div className="driver-row-number">
+                              {pred.driverNumber || '?'}
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
                     <div className={`col-actual ${errorClass ? `accuracy-${errorClass}` : ''} ${isFiltered ? 'filtered' : ''}`}>
                       {hasActual ? (
@@ -236,7 +307,7 @@ function App() {
                               ) : (
                                 <>
                                   Start: {pred.gridPosition !== null ? pred.gridPosition : 'N/A'}<br />
-                                  Predicted Finish: {pred.rank}<br />
+                                  Predicted Finish: {displayRank}<br />
                                   Actual Finish: {pred.actualPosition}<br />
                                   Error: {error} position{error !== 1 ? 's' : ''}
                                 </>
@@ -273,11 +344,11 @@ function App() {
       </main>
 
       <footer className="App-footer">
-        <p>Powered by deep neural networks trained on F1 data (2020-2024)</p>
+        <p>Powered by deep neural networks trained on FastF1 data (2020-2024)</p>
+        <p>Created by Nihal Ernest</p>
       </footer>
     </div>
   );
 }
 
 export default App;
-
