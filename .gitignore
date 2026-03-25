@@ -1,0 +1,71 @@
+# Fast F1 cache directory (can get large)
+cache/
+
+
+!requirements.txt
+
+# Model files (trained models - can be regenerated)
+models/
+*.pth
+*.pkl
+*.h5
+*.pt
+
+# Output directories (generated files)
+json/
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# Results and logs
+training_results*.json
+*_results.json
+*_comparison.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*~
+
