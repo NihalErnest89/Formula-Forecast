@@ -1452,6 +1452,26 @@
     padding: 2px 2px 6px 2px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
+    scrollbar-color: rgba(225, 6, 0, 0.4) transparent;
+  }
+
+  .race-selector.minimized .races-list::-webkit-scrollbar {
+    height: 3px;
+    width: auto;
+  }
+
+  .race-selector.minimized .races-list::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 2px;
+  }
+
+  .race-selector.minimized .races-list::-webkit-scrollbar-thumb {
+    background: rgba(225, 6, 0, 0.4);
+    border-radius: 2px;
+  }
+
+  .race-selector.minimized .races-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(225, 6, 0, 0.7);
   }
 
   .race-selector.minimized .race-button {
