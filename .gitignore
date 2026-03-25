@@ -19,9 +19,6 @@ json/
 *.pdf
 
 # Results and logs
-*.json
-!requirements.txt
-!plan.md
 training_results*.json
 *_results.json
 *_comparison.json
