@@ -1378,6 +1378,7 @@
 @media (max-width: 1024px) {
   .App-main.has-predictions {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .race-selector.minimized {
@@ -1407,6 +1408,7 @@
 
   .App-main.has-predictions {
     flex-direction: column;
+    align-items: stretch;
     gap: 0.75rem;
   }
 
