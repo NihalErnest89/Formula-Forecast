@@ -48,7 +48,7 @@ class F1NeuralNetwork(nn.Module):
     - Output layer: Single value (predicted finishing position 1-10)
     """
     
-    def __init__(self, input_size=9, hidden_sizes=[192, 96, 48], dropout_rate=0.4, equal_init=True):
+    def __init__(self, input_size=9, hidden_sizes=[128, 64, 32], dropout_rate=0.4, equal_init=False):
         super(F1NeuralNetwork, self).__init__()
         
         self.input_size = input_size
@@ -144,9 +144,27 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     Returns:
         Tuple of (X, y, label_encoder, filter_stats, feature_names)
     """
-    # Base features (9 features)
-    desired_features = ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
-                       'ConstructorStanding', 'ConstructorTrackAvg', 'GridPosition', 'RecentForm', 'TrackType']
+    # Base features (11 features: driver skill + recency wins)
+    desired_features = [
+        'SeasonPoints',
+        'SeasonStanding',
+        'SeasonAvgFinish',
+        'HistoricalTrackAvgPosition',
+        'ConstructorStanding',
+        'ConstructorTrackAvg',
+        'GridPosition',
+        'RecentForm',
+        'CareerWins',
+        'WinsLast3Years',
+        'TrackType',
+    ]
+    
+    # Backward compat: ensure optional columns exist (old CSVs may lack them)
+    df = df.copy()
+    if 'CareerWins' in desired_features and 'CareerWins' not in df.columns:
+        df['CareerWins'] = 0.0
+    if 'WinsLast3Years' in desired_features and 'WinsLast3Years' not in df.columns:
+        df['WinsLast3Years'] = 0.0
     
     # Use only features that exist in the dataframe
     feature_cols = [f for f in desired_features if f in df.columns]
@@ -564,6 +582,134 @@ def save_model(model, scaler, label_encoder, output_dir: str = None, model_index
     print(f"Model saved to {model_path}")
 
 
+def run_experiment(selected_features, max_epochs: int = 80) -> dict:
+    """
+    Lightweight training/eval loop for a given feature subset.
+
+    This does NOT save models to disk or run k-fold – it is intended for the
+    experiments UI: load data, pick columns, train one model, return metrics.
+    """
+    if not selected_features:
+        raise ValueError("selected_features must be a non-empty list")
+
+    device = torch.device("cpu")
+
+    # Load data using the existing helper
+    training_df, test_df, metadata = load_data()
+
+    # Respect TEST_YEARS / TEST_YEAR filter from config if present
+    from config import TEST_YEARS, TEST_YEAR
+
+    if TEST_YEAR is not None and "Year" in test_df.columns and not TEST_YEARS:
+        test_df = test_df[test_df["Year"] == TEST_YEAR].copy()
+    elif TEST_YEARS and "Year" in test_df.columns:
+        test_df = test_df[test_df["Year"].isin(TEST_YEARS)].copy()
+
+    # Prepare full feature matrices using existing pipeline
+    X_train, y_train, _, _, feature_names = prepare_features_and_labels(
+        training_df,
+        filter_dnf=True,
+        filter_outliers=True,
+        outlier_threshold=6,
+        top10_only=True,
+    )
+    X_test, y_test, _, _, _ = prepare_features_and_labels(
+        test_df,
+        filter_dnf=True,
+        filter_outliers=True,
+        outlier_threshold=6,
+        top10_only=True,
+    )
+
+    # Map requested feature names to indices
+    selected_set = set(selected_features)
+    selected_indices = [i for i, name in enumerate(feature_names) if name in selected_set]
+    selected_feature_names = [feature_names[i] for i in selected_indices]
+
+    if not selected_indices:
+        raise ValueError(
+            f"No selected features found. Available: {feature_names}, requested: {selected_features}"
+        )
+
+    print(f"[Experiment] Using features: {selected_feature_names}")
+
+    X_train_sel = X_train[:, selected_indices]
+    X_test_sel = X_test[:, selected_indices]
+
+    # Scale
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train_sel)
+    X_test_scaled = scaler.transform(X_test_sel)
+
+    # Datasets/loaders
+    train_dataset = F1Dataset(X_train_scaled, y_train)
+    test_dataset = F1Dataset(X_test_scaled, y_test)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+
+    # Model
+    input_size = X_train_scaled.shape[1]
+    model = F1NeuralNetwork(
+        input_size=input_size,
+        hidden_sizes=[128, 64, 32],
+        dropout_rate=0.4,
+        equal_init=False,
+    ).to(device)
+
+    criterion = PositionAwareLoss(exact_weight=5.0, base_loss="huber", delta=1.0)
+    optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=2e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=8, min_lr=1e-6
+    )
+
+    best_val_mae = float("inf")
+    best_state = None
+    patience = 0
+    max_patience = 20
+
+    print(f"[Experiment] Training for up to {max_epochs} epochs...")
+    for epoch in range(max_epochs):
+        train_loss, train_mae = train_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_mae, val_rmse, val_r2, val_exact, val_w1, val_w2, val_w3, _, _ = evaluate_model(
+            model, test_loader, criterion, device
+        )
+        scheduler.step(val_loss)
+
+        if val_mae < best_val_mae:
+            best_val_mae = val_mae
+            best_state = model.state_dict().copy()
+            patience = 0
+        else:
+            patience += 1
+            if patience >= max_patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    # Final evaluation with plain MSE for reporting
+    criterion_eval = nn.MSELoss()
+    test_loss, test_mae, test_rmse, test_r2, test_exact, test_w1, test_w2, test_w3, _, _ = evaluate_model(
+        model, test_loader, criterion_eval, device
+    )
+
+    print(
+        f"[Experiment] Test MAE={test_mae:.3f}, RMSE={test_rmse:.3f}, R2={test_r2:.4f}, "
+        f"Exact={test_exact:.1f}%, W1={test_w1:.1f}%, W2={test_w2:.1f}%, W3={test_w3:.1f}%"
+    )
+
+    return {
+        "features": selected_feature_names,
+        "mae": float(test_mae),
+        "rmse": float(test_rmse),
+        "r2": float(test_r2),
+        "exact_pct": float(test_exact),
+        "within_1_pct": float(test_w1),
+        "within_2_pct": float(test_w2),
+        "within_3_pct": float(test_w3),
+    }
+
+
 def main():
     """Main function to train and test the F1 prediction model (top 10 only)."""
     print("F1 Position Prediction Model Training (Top 10 Only)")
@@ -581,8 +727,8 @@ def main():
     print("\nLoading data...")
     training_df, test_df, metadata = load_data()
     
-    # Import training years from config
-    from config import TRAINING_YEARS
+    # Import training and test years from config
+    from config import TRAINING_YEARS, TEST_YEARS, TEST_YEAR, RUN_CAREER_WINS_COMPARISON
     
     # Verify that training data includes expected years
     expected_years = set(TRAINING_YEARS)
@@ -605,8 +751,26 @@ def main():
         )
     
     print(f"Training samples: {len(training_df)}")
-    print(f"Test samples: {len(test_df)}")
+    print(f"Test samples (all years): {len(test_df)}")
     print(f"Training years: {sorted(actual_years)}")
+
+    # Optionally restrict test data to years from config (e.g. TEST_YEARS = [2025, 2026])
+    test_years_config = TEST_YEARS if (TEST_YEARS and len(TEST_YEARS) > 0) else ([TEST_YEAR] if TEST_YEAR else None)
+    if test_years_config:
+        if "Year" not in test_df.columns:
+            print(
+                "\nWARNING: TEST_YEARS is set in config, "
+                "but test_data.csv does not contain a 'Year' column. "
+                "Using full test set instead."
+            )
+        else:
+            original_len = len(test_df)
+            test_df = test_df[test_df["Year"].isin(test_years_config)].copy()
+            filtered_years = sorted(test_df["Year"].unique())
+            print("\nApplying test years filter from config:")
+            print(f"  Config TEST_YEARS: {test_years_config}")
+            print(f"  Test samples: {original_len} -> {len(test_df)}")
+            print(f"  Years present after filtering: {filtered_years if filtered_years else '[]'}")
     
     # Prepare training data (filtered - no DNFs/outliers, top 10 only)
     # Test results show: Training on top 10 only improves top 10 MAE from 3.043 to 1.861
@@ -874,6 +1038,38 @@ def main():
     print(f"  Labels shape: {y_train_split.shape}")
     print(f"  Position range: {y_train_split.min():.0f} - {y_train_split.max():.0f}")
     
+    # Optional: compare 10 features (no WinsLast3Years) vs 11 features (with WinsLast3Years)
+    test_mae_9 = test_rmse_9 = test_r2_9 = test_exact_9 = test_w1_9 = test_w2_9 = test_w3_9 = None
+    if RUN_CAREER_WINS_COMPARISON and 'WinsLast3Years' in feature_names and len(X_test) > 0:
+        idx_w3 = feature_names.index('WinsLast3Years')
+        feature_names_10 = [f for f in feature_names if f != 'WinsLast3Years']
+        X_train_10 = np.delete(X_train_all, idx_w3, axis=1)
+        X_val_10 = np.delete(X_val_final, idx_w3, axis=1)
+        X_test_10 = np.delete(X_test, idx_w3, axis=1)
+        scaler_10 = StandardScaler()
+        X_train_10_scaled = scaler_10.fit_transform(X_train_10)
+        X_val_10_scaled = scaler_10.transform(X_val_10)
+        X_test_10_scaled = scaler_10.transform(X_test_10)
+        print("\n" + "=" * 60)
+        print("WINS LAST 3 YEARS COMPARISON (10 vs 11 features)")
+        print("=" * 60)
+        print("Training baseline model (10 features, no WinsLast3Years)...")
+        torch.manual_seed(42)
+        np.random.seed(42)
+        model_10, _ = train_model(
+            X_train_10_scaled, y_train_all,
+            X_val_10_scaled, y_val_split,
+            epochs=300, batch_size=32, learning_rate=0.005, device=device,
+            hidden_sizes=[128, 64, 32], feature_names=feature_names_10,
+            exact_weight=5.0, early_stop_patience=50
+        )
+        test_loader_10 = DataLoader(F1Dataset(X_test_10_scaled, y_test), batch_size=32, shuffle=False)
+        _, test_mae_9, test_rmse_9, test_r2_9, test_exact_9, test_w1_9, test_w2_9, test_w3_9, _, _ = evaluate_model(
+            model_10, test_loader_10, nn.MSELoss(), device
+        )
+        print(f"  10-feature (no WinsLast3Years) Test MAE: {test_mae_9:.3f}")
+        print("Training full model (11 features, with WinsLast3Years)...")
+    
     # Architecture: Optimized based on training improvements test
     # [128, 64, 32] - Best configuration (TrackID removed - had lowest importance 0.0993)
     # Using increased regularization: LR 0.005, Dropout 0.4, Weight Decay 2e-4
@@ -1058,6 +1254,28 @@ def main():
             print(f"  Filtered vs Unfiltered Within 3: {test_w3:.1f}% vs {test_w3_all:.1f}% (improvement: {test_w3 - test_w3_all:.1f}%)")
         else:
             test_mae_all = test_rmse_all = test_r2_all = test_w1_all = test_w2_all = test_w3_all = None
+        
+        # WinsLast3Years comparison summary (10 vs 11 features)
+        if test_mae_9 is not None:
+            print("\n" + "=" * 60)
+            print("WINS LAST 3 YEARS FEATURE COMPARISON (Test Set)")
+            print("=" * 60)
+            print(f"{'Metric':<22} {'10 feat (no W3Y)':<22} {'11 feat (+ W3Y)':<22} {'Difference':<12}")
+            print("-" * 78)
+            print(f"{'MAE':<22} {test_mae_9:<22.3f} {test_mae:<22.3f} {test_mae - test_mae_9:+.3f}")
+            print(f"{'RMSE':<22} {test_rmse_9:<22.3f} {test_rmse:<22.3f} {test_rmse - test_rmse_9:+.3f}")
+            print(f"{'R²':<22} {test_r2_9:<22.4f} {test_r2:<22.4f} {test_r2 - test_r2_9:+.4f}")
+            print(f"{'Exact %':<22} {test_exact_9:<22.1f} {test_exact:<22.1f} {test_exact - test_exact_9:+.1f}")
+            print(f"{'Within 1 %':<22} {test_w1_9:<22.1f} {test_w1:<22.1f} {test_w1 - test_w1_9:+.1f}")
+            print(f"{'Within 2 %':<22} {test_w2_9:<22.1f} {test_w2:<22.1f} {test_w2 - test_w2_9:+.1f}")
+            print(f"{'Within 3 %':<22} {test_w3_9:<22.1f} {test_w3:<22.1f} {test_w3 - test_w3_9:+.1f}")
+            if test_mae < test_mae_9:
+                print(f"\n  -> WinsLast3Years IMPROVES test MAE by {test_mae_9 - test_mae:.3f} (lower is better).")
+            elif test_mae > test_mae_9:
+                print(f"\n  -> WinsLast3Years WORSENS test MAE by {test_mae - test_mae_9:.3f} (higher is worse).")
+            else:
+                print(f"\n  -> WinsLast3Years has no effect on test MAE.")
+            print("=" * 60)
     else:
         print("\nNo test data available. Skipping test evaluation.")
         test_mae = test_rmse = test_r2 = test_w1 = test_w2 = test_w3 = None

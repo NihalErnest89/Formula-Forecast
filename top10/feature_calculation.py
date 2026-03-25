@@ -342,6 +342,59 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
         if pd.isna(driver_grid_avg):
             driver_grid_avg = 10.5  # Mid-field default for drivers with no grid history
         
+        # CareerWins: lifetime wins before this race (no double-count, one row per driver per race)
+        def _canonical_driver_num(x):
+            if pd.isna(x):
+                return x
+            try:
+                return str(int(float(x)))
+            except (ValueError, TypeError):
+                return str(x)
+        def _count_wins(df, driver_id):
+            if df is None or df.empty:
+                return 0
+            driver_id_str = _canonical_driver_num(driver_id)
+            df_driver = df.copy()
+            df_driver['_DriverNumber'] = df_driver['DriverNumber'].apply(_canonical_driver_num)
+            driver_races = df_driver[df_driver['_DriverNumber'] == driver_id_str]
+            if driver_races.empty:
+                return 0
+            # One row per race: deduplicate by (Year, RoundNumber) so we count each race at most once
+            if 'Year' in driver_races.columns and 'RoundNumber' in driver_races.columns:
+                driver_races = driver_races.drop_duplicates(subset=['Year', 'RoundNumber'], keep='first')
+            pos_col = 'ActualPosition' if 'ActualPosition' in driver_races.columns else 'Position'
+            if pos_col not in driver_races.columns:
+                return 0
+            return (driver_races[pos_col] == 1).sum()
+        # Single "prior" set: all races before (selected_year, selected_round), no double-count
+        prior_parts = []
+        if historical_df is not None and not historical_df.empty:
+            if 'Year' in historical_df.columns and 'RoundNumber' in historical_df.columns:
+                hist_prior = historical_df[
+                    (historical_df['Year'] < selected_year) |
+                    ((historical_df['Year'] == selected_year) & (historical_df['RoundNumber'] < selected_round))
+                ]
+                if not hist_prior.empty:
+                    prior_parts.append(hist_prior)
+        if not completed_races.empty:
+            prior_parts.append(completed_races)
+        if not prior_parts:
+            career_wins = 0
+            wins_last_3_years = 0
+        else:
+            prior_all = pd.concat(prior_parts, ignore_index=True)
+            # Normalize DriverNumber so 4, 4.0, "4" are one driver (avoids double-counting e.g. Norris)
+            prior_all = prior_all.copy()
+            prior_all['_DriverNum'] = prior_all['DriverNumber'].apply(_canonical_driver_num)
+            if 'Year' in prior_all.columns and 'RoundNumber' in prior_all.columns:
+                prior_all = prior_all.drop_duplicates(subset=['Year', 'RoundNumber', '_DriverNum'], keep='first')
+            prior_all = prior_all.drop(columns=['_DriverNum'], errors='ignore')
+            career_wins = _count_wins(prior_all, driver_num)
+            # WinsLast3Years: same prior but only last 3 calendar years
+            recent_start = max(prior_all['Year'].min(), selected_year - 2)
+            prior_3y = prior_all[prior_all['Year'] >= recent_start]
+            wins_last_3_years = _count_wins(prior_3y, driver_num)
+        
         # Calculate TrackType (street circuit = 1, permanent = 0)
         street_circuits = [
             'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',
@@ -363,6 +416,8 @@ def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, se
             'ConstructorTrackAvg': constructor_track_avg,  # Constructor's average finish at this track
             'GridPosition': driver_grid_avg if not pd.isna(driver_grid_avg) else 10.5,  # AvgGridPosition: driver's season-specific average grid position (default 10.5 if no history)
             'RecentForm': recent_form,  # Calculated from last 5 completed races
+            'CareerWins': career_wins,  # Lifetime wins: training set + completed races this season
+            'WinsLast3Years': wins_last_3_years,  # Wins in last 3 years (recency / on fire)
             'TrackType': track_type,  # Street circuit (1) or permanent (0)
             'DriverNumber': driver_num,
             'DriverName': driver_name,

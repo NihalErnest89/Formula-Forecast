@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 
+from top10.config import FEATURE_COLS
+
 
 def handle_nan_values(X: np.ndarray) -> np.ndarray:
     """
@@ -155,11 +157,13 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
             
             print(f"Loaded model (input_size={input_size})")
             
-            # Fail fast if old model detected (expects 11 features instead of 9)
-            if input_size != 9:
+            # Fail fast if model input size does not match configured feature count
+            expected_features = len(FEATURE_COLS)
+            if input_size != expected_features:
                 raise ValueError(
                     f"\n{'='*70}\n"
-                    f"ERROR: Old model detected! Model expects {input_size} features, but code uses 9 features.\n"
+                    f"ERROR: Model feature mismatch! Model expects {input_size} features, "
+                    f"but code is configured for {expected_features} features.\n"
                     f"\nThis is an old model file. Please delete it and retrain:\n"
                     f"  1. Delete old model files in {model_dir}:\n"
                     f"     - f1_predictor_model_top10.pth\n"
@@ -169,12 +173,13 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
                     f"{'='*70}"
                 )
             
-            # Verify scaler expects 9 features
+            # Verify scaler expects the same number of features
             scaler_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else None
-            if scaler_features is not None and scaler_features != 9:
+            if scaler_features is not None and scaler_features != expected_features:
                 raise ValueError(
                     f"\n{'='*70}\n"
-                    f"ERROR: Old scaler detected! Scaler expects {scaler_features} features, but code uses 9 features.\n"
+                    f"ERROR: Scaler feature mismatch! Scaler expects {scaler_features} features, "
+                    f"but code is configured for {expected_features} features.\n"
                     f"\nThis is an old scaler file. Please delete it and retrain:\n"
                     f"  1. Delete old scaler file: {nn_scaler_path}\n"
                     f"  2. Retrain with: python top10/train.py\n"

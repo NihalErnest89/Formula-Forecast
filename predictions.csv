@@ -1,0 +1,11 @@
+Year,EventName,RoundNumber,SeasonPoints,SeasonStanding,SeasonAvgFinish,HistoricalTrackAvgPosition,ConstructorPoints,ConstructorStanding,ConstructorTrackAvg,GridPosition,ActualGridPosition,RecentForm,CareerWins,WinsLast3Years,PointsGapToLeader,TrackType,FormTrend,DriverNumber,DriverName,TeamName,ActualPosition,Points,RacePoints,SprintPoints,IsDNF,Status,PredictedPosition,Rank
+2026,Chinese Grand Prix,2,25.0,1,1.0,6.0,43.0,1,2.0,1.0,2.0,1.0,4,3,0.0,0,0.0,63,RUS,Mercedes,2.0,26.0,18.0,8.0,False,Finished,2.0716722,1
+2026,Chinese Grand Prix,2,0.0,11,20.0,10.0,8.0,4,7.5,3.0,9.0,20.0,0,0,25.0,0,0.0,6,HAD,Red Bull Racing,8.0,4.0,4.0,0.0,False,Finished,2.3495612,2
+2026,Chinese Grand Prix,2,18.0,2,2.0,10.0,43.0,1,2.0,2.0,1.0,2.0,0,0,7.0,0,0.0,12,ANT,Mercedes,1.0,29.0,25.0,4.0,False,Finished,2.9364955,3
+2026,Chinese Grand Prix,2,0.0,11,21.0,8.0,10.0,3,5.0,5.0,5.0,21.0,2,2,25.0,0,0.0,81,PIA,McLaren,19.0,3.0,0.0,3.0,False,Did not start,3.5758817,4
+2026,Chinese Grand Prix,2,15.0,3,3.0,4.0,27.0,2,4.5,4.0,4.0,3.0,6,3,10.0,0,0.0,16,LEC,Ferrari,4.0,19.0,12.0,7.0,False,Finished,3.8612506,5
+2026,Chinese Grand Prix,2,10.0,5,5.0,1.0,10.0,3,5.0,6.0,6.0,5.0,45,9,15.0,0,0.0,1,NOR,McLaren,20.0,5.0,0.0,5.0,False,Did not start,5.056195,6
+2026,Chinese Grand Prix,2,12.0,4,4.0,9.0,27.0,2,4.5,7.0,3.0,4.0,21,2,13.0,0,0.0,44,HAM,Ferrari,3.0,21.0,15.0,6.0,False,Finished,5.959878,7
+2026,Chinese Grand Prix,2,0.0,11,13.0,10.0,4.0,6,13.0,8.0,14.0,13.0,0,0,25.0,0,0.0,30,LAW,Racing Bulls,7.0,8.0,6.0,2.0,False,Finished,7.14845,8
+2026,Chinese Grand Prix,2,4.0,8,8.0,10.0,4.0,6,13.0,9.0,15.0,8.0,0,0,21.0,0,0.0,41,LIN,Racing Bulls,12.0,0.0,0.0,0.0,False,Lapped,7.402898,9
+2026,Chinese Grand Prix,2,2.0,9,9.0,10.0,2.0,7,12.0,10.0,16.0,9.0,0,0,23.0,0,0.0,5,BOR,Audi,21.0,0.0,0.0,0.0,False,Did not start,7.433356,10

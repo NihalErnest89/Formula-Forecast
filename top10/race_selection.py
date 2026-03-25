@@ -132,12 +132,12 @@ def select_race_interactive(test_df: pd.DataFrame, training_df: pd.DataFrame = N
     
     while True:
         try:
-            race_choice = input(f"\nSelect race (1-{len(all_races)}) or 'q' to quit" + (f" or 'all' to predict all {selected_year} races" if selected_year == 2025 else "") + ": ").strip()
+            race_choice = input(f"\nSelect race (1-{len(all_races)}) or 'q' to quit or 'all' to predict all {selected_year} races: ").strip()
             if race_choice.lower() == 'q':
                 return None, None, False
             
-            # Check for "all" option (only for 2025)
-            if race_choice.lower() == 'all' and selected_year == 2025:
+            # Check for "all" option (predict all races for selected year)
+            if race_choice.lower() == 'all':
                 # Process all races for 2025 and return list of race dataframes
                 all_race_data = []
                 print(f"\nProcessing all {len(all_races)} races for {selected_year}...")
@@ -179,10 +179,7 @@ def select_race_interactive(test_df: pd.DataFrame, training_df: pd.DataFrame = N
             else:
                 print(f"Please enter a number between 1 and {len(all_races)}")
         except ValueError:
-            if race_choice.lower() == 'all' and selected_year != 2025:
-                print("'all' option is only available for 2025. Please select a specific race.")
-            else:
-                print("Please enter a valid number or 'q' to quit")
+            print("Please enter a valid number, 'all', or 'q' to quit")
     
     # Check if this is a future race (no data in test_df)
     race_df = test_df[
