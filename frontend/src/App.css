@@ -427,7 +427,7 @@
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  opacity: 0;
+  opacity: 0.2;
   transition: opacity 0.3s ease;
   z-index: 0;
   border-radius: 6px;
@@ -1387,12 +1387,22 @@
 }
 
 @media (max-width: 768px) {
+  .App-header {
+    padding: 1.25rem 1rem;
+  }
+
   .App-header h1 {
-    font-size: 1.8rem;
+    font-size: 1.6rem;
+    letter-spacing: 1px;
+  }
+
+  .App-header p {
+    font-size: 0.9rem;
   }
 
   .App-main {
     padding: 1rem;
+    gap: 1rem;
   }
 
   .App-main.has-predictions {
@@ -1400,13 +1410,19 @@
     gap: 1rem;
   }
 
-  .race-selector,
+  .race-selector {
+    padding: 1.25rem;
+  }
+
   .predictions-container {
-    padding: 1.5rem;
+    padding: 1.25rem;
   }
 
   .race-selector.minimized {
-    max-height: 300px;
+    flex: none;
+    width: 100%;
+    max-height: 220px;
+    padding: 1rem;
   }
 
   .races-list {
@@ -1415,29 +1431,128 @@
 
   .table-header,
   .prediction-row {
-    grid-template-columns: 60px 1fr 80px;
+    grid-template-columns: 56px 1fr 72px;
     gap: 0.5rem;
-    padding: 0.75rem;
+    padding: 0.75rem 0.6rem;
+  }
+
+  .rank-number {
+    width: 34px;
+    height: 34px;
+    font-size: 0.95rem;
   }
 
   .rank-number.gold,
   .rank-number.silver,
   .rank-number.bronze {
-    width: 40px;
-    height: 40px;
-    font-size: 1.1rem;
-  }
-
-  .col-rank {
-    font-size: 0.9rem;
+    width: 38px;
+    height: 38px;
+    font-size: 1rem;
   }
 
   .driver-name {
     font-size: 1rem;
   }
 
-  .position-value {
+  .driver-row-image {
+    display: none;
+  }
+
+  .actual-value {
     font-size: 1rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  .race-info h2 {
+    font-size: 1.5rem;
+  }
+
+  .tooltip {
+    white-space: normal;
+    max-width: 200px;
+  }
+}
+
+@media (max-width: 480px) {
+  .App-header h1 {
+    font-size: 1.3rem;
+  }
+
+  .App-main {
+    padding: 0.75rem;
+  }
+
+  .race-selector {
+    padding: 1rem;
+  }
+
+  .predictions-container {
+    padding: 1rem;
+  }
+
+  .race-selector.minimized {
+    max-height: 180px;
+    padding: 0.75rem;
+  }
+
+  .table-header,
+  .prediction-row {
+    grid-template-columns: 48px 1fr 60px;
+    gap: 0.35rem;
+    padding: 0.6rem 0.5rem;
+  }
+
+  .rank-number {
+    width: 30px;
+    height: 30px;
+    font-size: 0.85rem;
+  }
+
+  .rank-number.gold,
+  .rank-number.silver,
+  .rank-number.bronze {
+    width: 34px;
+    height: 34px;
+    font-size: 0.95rem;
+  }
+
+  .driver-name {
+    font-size: 0.9rem;
+  }
+
+  .constructor {
+    font-size: 0.72rem;
+  }
+
+  .actual-value {
+    font-size: 0.9rem;
+    padding: 0.15rem 0.4rem;
+  }
+
+  .race-info h2 {
+    font-size: 1.2rem;
+  }
+
+  .race-info p {
+    font-size: 0.9rem;
+  }
+
+  .year-filter {
+    gap: 0.5rem;
+  }
+
+  .year-filter select {
+    font-size: 0.9rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .future-badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.4rem;
+  }
+
+  .predictions-footer {
+    font-size: 0.8rem;
   }
 }
 

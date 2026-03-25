@@ -8,7 +8,7 @@ const DATA_BASE = process.env.PUBLIC_URL + '/data';
 function App() {
   const [races, setRaces] = useState([]);
   const [filteredRaces, setFilteredRaces] = useState([]);
-  const [selectedYear, setSelectedYear] = useState(null);
+  const [selectedYear, setSelectedYear] = useState(2025);
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(false);
