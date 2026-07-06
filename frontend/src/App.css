@@ -111,26 +111,122 @@
 }
 
 .App-header h1 {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
-  font-weight: 700;
-  text-shadow: 
-    2px 2px 4px rgba(0, 0, 0, 0.8), 
+  font-family: var(--font-display);
+  font-size: 2.8rem;
+  margin-bottom: 0.4rem;
+  font-weight: 900;
+  font-style: italic;
+  text-shadow:
+    2px 2px 4px rgba(0, 0, 0, 0.8),
     0 0 15px rgba(225, 6, 0, 0.3),
     0 0 30px rgba(225, 6, 0, 0.2);
   position: relative;
   z-index: 1;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: #ffffff;
 }
 
+.App-header h1::after {
+  content: '';
+  display: block;
+  width: 64px;
+  height: 4px;
+  margin: 0.5rem auto 0;
+  background: var(--f1-red);
+  box-shadow: 0 0 14px rgba(225, 6, 0, 0.7);
+  transform: skewX(-20deg);
+}
+
 .App-header p {
-  font-size: 1.1rem;
-  opacity: 0.9;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  opacity: 0.85;
   position: relative;
   z-index: 1;
-  letter-spacing: 1px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* Animated team-colour speed ticker across the very top of the header */
+.header-stripe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 2;
+  background: linear-gradient(
+    90deg,
+    #e10600, #ff8700, #ffd700, #00d2be, #1e41ff, #e10600
+  );
+  background-size: 200% 100%;
+  animation: stripeSlide 6s linear infinite;
+  opacity: 0.85;
+}
+
+@keyframes stripeSlide {
+  from { background-position: 0% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* ===== Navigation tabs (timing-screen style) ===== */
+.nav-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: linear-gradient(180deg, rgba(12, 12, 12, 0.97), rgba(8, 8, 8, 0.97));
+  border-bottom: 1px solid var(--border-1);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+.nav-tabs-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1rem;
+}
+
+.nav-tab {
+  position: relative;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  padding: 1rem 1.4rem;
+  cursor: pointer;
+  transition: color 0.2s var(--ease);
+}
+
+.nav-tab:hover {
+  color: var(--text-1);
+}
+
+.nav-tab.active {
+  color: #fff;
+}
+
+.nav-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0.6rem;
+  right: 0.6rem;
+  bottom: 0;
+  height: 3px;
+  background: var(--f1-red);
+  box-shadow: 0 0 12px rgba(225, 6, 0, 0.7);
+  transform: skewX(-20deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header-stripe { animation: none; }
 }
 
 .App-main {
@@ -139,15 +235,29 @@
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+}
+
+.view-body {
   display: flex;
   flex-direction: column;
   gap: 2rem;
+  animation: viewFade 0.35s var(--ease);
 }
 
-.App-main.has-predictions {
+@keyframes viewFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.view-body.has-predictions,
+.view-body.has-sim {
   flex-direction: row;
   align-items: flex-start;
   gap: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-body { animation: none; }
 }
 
 .error-message {
@@ -1376,7 +1486,9 @@
 }
 
 @media (max-width: 1024px) {
-  .App-main.has-predictions {
+  .App-main.has-predictions,
+  .view-body.has-predictions,
+  .view-body.has-sim {
     flex-direction: column;
     align-items: stretch;
   }
@@ -1403,10 +1515,15 @@
 
   .App-main {
     padding: 0.75rem;
+  }
+
+  .view-body {
     gap: 0.75rem;
   }
 
-  .App-main.has-predictions {
+  .App-main.has-predictions,
+  .view-body.has-predictions,
+  .view-body.has-sim {
     flex-direction: column;
     align-items: stretch;
     gap: 0.75rem;
@@ -1570,6 +1687,62 @@
     margin-top: 1rem;
     padding-top: 1rem;
   }
+}
+
+/* ===== About view ===== */
+.about-view {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.about-card {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%),
+    radial-gradient(circle at top right, rgba(225, 6, 0, 0.1) 0%, transparent 50%);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  box-shadow: var(--shadow-card);
+  position: relative;
+}
+
+.about-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(225, 6, 0, 0.5), transparent);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.about-card h2 {
+  font-size: 1.8rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 1rem;
+}
+
+.about-card h3 {
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--f1-red-bright);
+  margin: 1.5rem 0 0.5rem;
+}
+
+.about-card p {
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+/* Tabular numerals for all timing/odds figures */
+.rank-number,
+.actual-value,
+.actual-unknown {
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 480px) {

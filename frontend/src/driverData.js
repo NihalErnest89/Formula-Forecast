@@ -14,6 +14,7 @@ export const teamColors = {
   'Williams': { primary: '#005AFF', secondary: '#003DCC', name: 'Williams' },
   'AlphaTauri': { primary: '#2B4562', secondary: '#1E3247', name: 'AlphaTauri' },
   'RB': { primary: '#2B4562', secondary: '#1E3247', name: 'RB' },
+  'Racing Bulls': { primary: '#6692FF', secondary: '#1E3247', name: 'Racing Bulls' },
   'Visa Cash App RB': { primary: '#003DCC', secondary: '#002699', name: 'Visa Cash App RB' },
   'Sauber': { primary: '#52C41A', secondary: '#389E0D', name: 'Sauber' },
   'Kick Sauber': { primary: '#52C41A', secondary: '#389E0D', name: 'Kick Sauber' },
@@ -136,6 +137,20 @@ export const getDriverInfo = (driverName) => {
   }
   
   return null;
+};
+
+/**
+ * Resolve a team color from a driver code (e.g. "VER") by looking up the
+ * driver's team. The prediction JSON ships `constructor: null`, so the table
+ * and simulator should use this instead of getTeamColor(pred.constructor).
+ */
+export const getTeamColorForDriver = (driverName) => {
+  const info = driverName ? getDriverInfo(driverName) : null;
+  if (info && info.team) {
+    return getTeamColor(info.team);
+  }
+  // Fall back to treating the input as a constructor name directly.
+  return getTeamColor(driverName);
 };
 
 export const getTeamColor = (constructorName) => {

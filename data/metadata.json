@@ -1,0 +1,18 @@
+{
+  "training_samples": 2139,
+  "test_samples": 677,
+  "features": [
+    "SeasonPoints",
+    "SeasonStanding",
+    "SeasonAvgFinish",
+    "HistoricalTrackAvgPosition",
+    "ConstructorStanding",
+    "ConstructorTrackAvg",
+    "GridPosition",
+    "RecentForm",
+    "CareerWins",
+    "WinsLast3Years",
+    "TrackType"
+  ],
+  "label": "ActualPosition"
+}

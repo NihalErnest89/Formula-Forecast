@@ -29,19 +29,52 @@ def _canonical_driver_num(x):
         return str(x)
 
 
-def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
+# Directory for raw per-season result snapshots (enables incremental collection:
+# already-collected rounds are read from disk and only NEW races hit the API)
+RAW_DATA_DIR = Path(__file__).parent / 'data' / 'raw'
+
+
+def _event_is_past(event) -> bool:
+    """True if the event has already taken place (so results should exist)."""
+    ev_date = event.get('EventDate', None)
+    if pd.isna(ev_date):
+        return True  # Unknown date: attempt the fetch, worst case it fails gracefully
+    ts = pd.Timestamp(ev_date)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(None)
+    return ts <= pd.Timestamp.now()
+
+
+def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False) -> pd.DataFrame:
     """
-    Get all race data for a given season.
-    
+    Get all race data for a given season (incrementally).
+
+    Rounds already saved in data/raw/season_<year>.csv are loaded from disk;
+    only new (not yet collected, already completed) races are fetched from the
+    Fast F1 API. Pre-season testing events and future races are skipped.
+
     Args:
         year: Season year (e.g., 2024)
         max_retries: Maximum number of retry attempts for API calls
-        
+        force_refresh: If True, ignore the local snapshot and refetch everything
+
     Returns:
         DataFrame with race results for the season
     """
+    # Load existing snapshot for incremental collection
+    RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    raw_path = RAW_DATA_DIR / f'season_{year}.csv'
+    existing = pd.DataFrame()
+    if raw_path.exists() and not force_refresh:
+        try:
+            existing = pd.read_csv(raw_path)
+        except Exception as e:
+            print(f"  Warning: Could not read snapshot {raw_path} ({e}); refetching season.")
+            existing = pd.DataFrame()
+    done_rounds = set(existing['RoundNumber'].unique()) if not existing.empty else set()
+
     schedule = None
-    
+
     # Try to get schedule with retries
     for attempt in range(max_retries):
         try:
@@ -55,19 +88,34 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
             else:
                 print(f"  Error: Failed to load schedule for {year} after {max_retries} attempts: {e}")
                 print(f"  Skipping season {year}. This may be due to API issues or network problems.")
-                return pd.DataFrame()
-    
+                return existing
+
     if schedule is None or schedule.empty:
         print(f"  Warning: No schedule found for {year}")
-        return pd.DataFrame()
-    
+        return existing
+
+    # Skip pre-season testing events: they have RoundNumber 0 and their "results"
+    # are meaningless for race prediction (previously they were collected and even
+    # assigned fabricated race points, contaminating the training data)
+    schedule = schedule[schedule['RoundNumber'] >= 1]
+
     all_races = []
-    
+    skipped_cached = 0
+    skipped_future = 0
+
     for _, event in schedule.iterrows():
+        # Incremental: skip rounds we already have on disk
+        if event['RoundNumber'] in done_rounds:
+            skipped_cached += 1
+            continue
+        # Skip races that haven't happened yet (no results to fetch)
+        if not _event_is_past(event):
+            skipped_future += 1
+            continue
         try:
-            # Get race session
+            # Get race session (results only - laps/telemetry/weather not needed)
             session = fastf1.get_session(year, event['EventName'], 'R')
-            session.load()
+            session.load(laps=False, telemetry=False, weather=False, messages=False)
             
             # Get race results
             results = session.results
@@ -118,9 +166,9 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
                 # Check if GridPosition column exists, if not try to get from qualifying session
                 if 'GridPosition' not in results.columns:
                     try:
-                        # Try to get qualifying session
+                        # Try to get qualifying session (results only)
                         qual_session = fastf1.get_session(year, event['EventName'], 'Q')
-                        qual_session.load()
+                        qual_session.load(laps=False, telemetry=False, weather=False, messages=False)
                         qual_results = qual_session.results
                         if qual_results is not None and not qual_results.empty:
                             # Merge qualifying positions
@@ -144,14 +192,35 @@ def get_season_data(year: int, max_retries: int = 3) -> pd.DataFrame:
                     except Exception:
                         pass
                 
-                all_races.append(results)
+                all_races.append(pd.DataFrame(results))
         except Exception as e:
             print(f"  Warning: Error loading race {event.get('EventName', 'Unknown')} {year}: {e}")
             continue
-    
-    if all_races:
-        return pd.concat(all_races, ignore_index=True)
-    return pd.DataFrame()
+
+    if skipped_cached or skipped_future or all_races:
+        print(f"  {year}: {len(all_races)} new races fetched, "
+              f"{skipped_cached} loaded from snapshot, {skipped_future} future races skipped")
+
+    # Merge newly fetched races with the existing snapshot and persist
+    frames = ([existing] if not existing.empty else []) + all_races
+    if not frames:
+        return pd.DataFrame()
+
+    season_df = pd.concat(frames, ignore_index=True)
+
+    # Normalize DriverNumber to a canonical string: fresh fastf1 results carry it
+    # as str ('44') but the CSV snapshot round-trip turns it into int64 (44),
+    # which silently breaks downstream string comparisons (e.g. career win counts)
+    if 'DriverNumber' in season_df.columns:
+        season_df['DriverNumber'] = season_df['DriverNumber'].apply(_canonical_driver_num)
+
+    if all_races:  # Only rewrite the snapshot when something new was fetched
+        try:
+            season_df.to_csv(raw_path, index=False)
+            print(f"  Snapshot updated: {raw_path}")
+        except Exception as e:
+            print(f"  Warning: Could not save snapshot {raw_path}: {e}")
+    return season_df
 
 
 def calculate_season_points(driver_results: pd.DataFrame) -> Dict[str, int]:
@@ -574,25 +643,27 @@ def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_y
         return np.nan
 
 
-def organize_data(training_years: List[int], test_years: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def organize_data(training_years: List[int], test_years: List[int],
+                  force_refresh: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Collect and organize F1 data into features and labels.
-    
+
     Args:
         training_years: List of years for training data (e.g., [2020, 2021, 2022, 2023, 2024, 2025])
         test_years: List of years for test data (e.g., [2026])
-        
+        force_refresh: If True, ignore local season snapshots and refetch everything
+
     Returns:
         Tuple of (training_data, test_data) DataFrames
     """
     print("Collecting training data...")
     training_races = []
-    
+
     # Collect training data from past seasons
     successful_years = []
     for year in training_years:
         print(f"  Loading season {year}...")
-        season_data = get_season_data(year)
+        season_data = get_season_data(year, force_refresh=force_refresh)
         if not season_data.empty:
             training_races.append(season_data)
             successful_years.append(year)
@@ -618,7 +689,7 @@ def organize_data(training_years: List[int], test_years: List[int]) -> Tuple[pd.
     test_races_list = []
     for ty in test_years:
         print(f"Collecting test data for {ty}...")
-        season_df = get_season_data(ty)
+        season_df = get_season_data(ty, force_refresh=force_refresh)
         if not season_df.empty:
             test_races_list.append(season_df)
     test_data = pd.concat(test_races_list, ignore_index=True) if test_races_list else pd.DataFrame()
@@ -1195,10 +1266,10 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
     metadata = {
         'training_samples': len(training_df),
         'test_samples': len(test_df),
-        'features': ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
-                     'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm', 
-                     'TrackType'],
-        'label': 'DriverNumber'
+        'features': ['SeasonPoints', 'SeasonStanding', 'SeasonAvgFinish',
+                     'HistoricalTrackAvgPosition', 'ConstructorStanding', 'ConstructorTrackAvg',
+                     'GridPosition', 'RecentForm', 'CareerWins', 'WinsLast3Years', 'TrackType'],
+        'label': 'ActualPosition'
     }
     
     with open(Path(output_dir) / 'metadata.json', 'w', encoding='utf-8') as f:
@@ -1207,15 +1278,19 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
 
 def main():
     """Main function to collect and organize F1 data."""
+    import sys
+    force_refresh = '--refresh' in sys.argv
+
     # Training data from 2020 onwards (expanded dataset for better generalization)
     training_years = [2020, 2021, 2022, 2023, 2024]
     # Test years (both appear in predict race selector)
     test_years = [2025, 2026]
-    
+
     print("F1 Data Collection")
     print("=" * 50)
-    print("Note: Data is cached locally. First run will download data,")
-    print("      subsequent runs will use cached data (much faster).")
+    print("Note: Collection is incremental - races already saved in data/raw/")
+    print("      snapshots are loaded from disk; only NEW races are fetched.")
+    print("      Use 'python collect_data.py --refresh' to force a full refetch.")
     print()
     print("Note: If you encounter API errors, the script will:")
     print("      - Retry failed requests up to 3 times")
@@ -1224,7 +1299,7 @@ def main():
     print()
     
     try:
-        training_df, test_df = organize_data(training_years, test_years)
+        training_df, test_df = organize_data(training_years, test_years, force_refresh=force_refresh)
         save_data(training_df, test_df)
         
         print("\nData collection complete!")

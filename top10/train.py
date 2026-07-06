@@ -127,12 +127,13 @@ def load_data(data_dir: str = None):
     return training_df, test_df, metadata
 
 
-def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None, 
-                                filter_dnf=True, filter_outliers=True, 
-                                outlier_threshold=6, top10_only=False):
+def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
+                                filter_dnf=True, filter_outliers=True,
+                                outlier_threshold=6, top10_only=False,
+                                feature_stats=None):
     """
     Prepare feature matrix and label vector from DataFrame.
-    
+
     Args:
         df: DataFrame with features and labels
         label_encoder: Optional pre-fitted label encoder
@@ -140,9 +141,13 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
         filter_outliers: If True, remove entries where finish position is much worse than grid position
         outlier_threshold: Maximum allowed difference between finish and grid position (default: 6)
         top10_only: If True, only include positions 1-10 (default: False)
-        
+        feature_stats: Optional dict of per-column {'median','mean','std'} fitted on
+            TRAINING data. Pass the stats returned from the training call when
+            preparing validation/test data so imputation and outlier clipping do
+            not depend on (or leak from) the evaluation set itself.
+
     Returns:
-        Tuple of (X, y, label_encoder, filter_stats, feature_names)
+        Tuple of (X, y, feature_stats_used, filter_stats, feature_names)
     """
     # Base features (11 features: driver skill + recency wins)
     desired_features = [
@@ -177,7 +182,19 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     
     # Start with all rows
     valid_mask = pd.Series([True] * len(df), index=df.index)
-    filter_stats = {'initial_count': len(df), 'dnf_removed': 0, 'outlier_removed': 0, 'nan_removed': 0, 'top10_filtered': 0}
+    filter_stats = {'initial_count': len(df), 'testing_removed': 0, 'dnf_removed': 0, 'outlier_removed': 0, 'nan_removed': 0, 'top10_filtered': 0}
+
+    # Remove pre-season testing events: their "results" are meaningless test sessions
+    # (old data CSVs contain them with fabricated race points)
+    testing_mask = pd.Series(False, index=df.index)
+    if 'RoundNumber' in df.columns:
+        testing_mask = testing_mask | (df['RoundNumber'] < 1)
+    if 'EventName' in df.columns:
+        testing_mask = testing_mask | df['EventName'].astype(str).str.contains('test', case=False, na=False)
+    filter_stats['testing_removed'] = int((testing_mask & valid_mask).sum())
+    valid_mask = valid_mask & ~testing_mask
+    if filter_stats['testing_removed'] > 0:
+        print(f"  Removed {filter_stats['testing_removed']} pre-season testing entries")
     
     # Filter to top 10 only if requested
     if top10_only and 'ActualPosition' in df.columns:
@@ -263,25 +280,34 @@ def prepare_features_and_labels(df: pd.DataFrame, label_encoder=None,
     
     y = df_filtered['ActualPosition'].values
     
-    # Handle missing values
+    # Handle missing values and clip extreme outliers.
+    # Stats are fitted here only when feature_stats is None (training data);
+    # for validation/test, pass the training stats so the same row always gets
+    # the same features regardless of which dataset it is evaluated in.
+    fitted_stats = {}
     for col in X.columns:
-        if X[col].isna().any():
+        if feature_stats is not None and col in feature_stats:
+            stats = feature_stats[col]
+        else:
             median_val = X[col].median()
-            if pd.isna(median_val):
-                X[col] = X[col].fillna(0)
-            else:
-                X[col] = X[col].fillna(median_val)
-        
-        # Clip extreme outliers
+            stats = {
+                'median': 0.0 if pd.isna(median_val) else float(median_val),
+                'mean': float(X[col].mean()),
+                'std': float(X[col].std()),
+            }
+        fitted_stats[col] = stats
+
+        if X[col].isna().any():
+            X[col] = X[col].fillna(stats['median'])
+
+        # Clip extreme outliers (bounds from training stats)
         if col != 'GridPosition':
-            mean_val = X[col].mean()
-            std_val = X[col].std()
-            if not pd.isna(std_val) and std_val > 0:
-                lower_bound = mean_val - 3 * std_val
-                upper_bound = mean_val + 3 * std_val
+            if not pd.isna(stats['std']) and stats['std'] > 0:
+                lower_bound = stats['mean'] - 3 * stats['std']
+                upper_bound = stats['mean'] + 3 * stats['std']
                 X[col] = X[col].clip(lower=lower_bound, upper=upper_bound)
-    
-    return X.values, y, None, filter_stats, feature_names
+
+    return X.values, y, fitted_stats, filter_stats, feature_names
 
 
 class PositionAwareLoss(nn.Module):
@@ -309,7 +335,9 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     """Train for one epoch."""
     model.train()
     total_loss = 0
-    
+    all_preds = []
+    all_labels = []
+
     for features, labels in dataloader:
         features, labels = features.to(device), labels.to(device).float()
         optimizer.zero_grad()
@@ -319,20 +347,14 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item()
-    
+        # Reuse this batch's outputs for the monitoring MAE instead of a second
+        # full forward pass over the training set (roughly halves epoch time)
+        all_preds.extend(np.atleast_1d(outputs.detach().cpu().numpy()))
+        all_labels.extend(np.atleast_1d(labels.cpu().numpy()))
+
     avg_loss = total_loss / len(dataloader)
-    
-    # Calculate MAE for monitoring
-    with torch.no_grad():
-        all_preds = []
-        all_labels = []
-        for features, labels in dataloader:
-            features, labels = features.to(device), labels.to(device).float()
-            outputs = model(features)
-            all_preds.extend(outputs.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-        mae = mean_absolute_error(all_labels, all_preds)
-    
+    mae = mean_absolute_error(all_labels, all_preds)
+
     return avg_loss, mae
 
 
@@ -606,7 +628,7 @@ def run_experiment(selected_features, max_epochs: int = 80) -> dict:
         test_df = test_df[test_df["Year"].isin(TEST_YEARS)].copy()
 
     # Prepare full feature matrices using existing pipeline
-    X_train, y_train, _, _, feature_names = prepare_features_and_labels(
+    X_train, y_train, feat_stats, _, feature_names = prepare_features_and_labels(
         training_df,
         filter_dnf=True,
         filter_outliers=True,
@@ -619,6 +641,7 @@ def run_experiment(selected_features, max_epochs: int = 80) -> dict:
         filter_outliers=True,
         outlier_threshold=6,
         top10_only=True,
+        feature_stats=feat_stats,
     )
 
     # Map requested feature names to indices
@@ -823,17 +846,22 @@ def main():
         print(f"\n  Fold {fold_idx + 1}/{n_splits}:")
         print(f"    Train years: {train_years}")
         print(f"    Validation years: {val_years}")
+
+        # Seed per fold so CV results are reproducible across runs
+        torch.manual_seed(42 + fold_idx)
+        np.random.seed(42 + fold_idx)
         
         # Split data
         train_fold_df = training_df[training_df['Year'].isin(train_years)].copy()
         val_fold_df = training_df[training_df['Year'].isin(val_years)].copy()
         
-        # Prepare features
-        X_train_fold, y_train_fold, _, _, feature_names = prepare_features_and_labels(
+        # Prepare features (val fold uses the train fold's imputation/clip stats)
+        X_train_fold, y_train_fold, fold_stats, _, feature_names = prepare_features_and_labels(
             train_fold_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
         )
         X_val_fold, y_val_fold, _, _, _ = prepare_features_and_labels(
-            val_fold_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
+            val_fold_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True,
+            feature_stats=fold_stats
         )
         
         # Scale features
@@ -937,7 +965,7 @@ def main():
     # Use the model from the last fold (trained on all years except the last validation year)
     # Or train a final model on ALL training data
     print(f"\nTraining final model on ALL training data ({TRAINING_YEARS})...")
-    X_train_all, y_train_all, _, train_stats, feature_names = prepare_features_and_labels(
+    X_train_all, y_train_all, final_feat_stats, train_stats, feature_names = prepare_features_and_labels(
         training_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
     )
     
@@ -953,7 +981,8 @@ def main():
     val_df_final['_original_index'] = range(len(val_df_final))
     
     X_val_final, y_val_final, _, val_stats, _ = prepare_features_and_labels(
-        val_df_final, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True
+        val_df_final, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True,
+        feature_stats=final_feat_stats
     )
     X_val_final_scaled = scaler.transform(X_val_final)
     
@@ -1010,14 +1039,16 @@ def main():
     # Prepare test data (filtered - for primary evaluation, top 10 only)
     print("\nPreparing test data (top 10 positions only, excluding DNFs/outliers)...")
     X_test, y_test, _, test_stats, _ = prepare_features_and_labels(
-        test_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True)
+        test_df, filter_dnf=True, filter_outliers=True, outlier_threshold=6, top10_only=True,
+        feature_stats=final_feat_stats)
     
     # Also prepare unfiltered test data (for comparison/reference, top 10 only)
     # Note: We still exclude DNFs (NaN positions) since we can't evaluate accuracy on them
     # But we include outliers (finish >> grid) for reference
     print("\nPreparing test data (top 10 only, including outliers for reference)...")
     X_test_all, y_test_all, _, test_stats_all, _ = prepare_features_and_labels(
-        test_df, filter_dnf=True, filter_outliers=False, outlier_threshold=6, top10_only=True)
+        test_df, filter_dnf=True, filter_outliers=False, outlier_threshold=6, top10_only=True,
+        feature_stats=final_feat_stats)
     
     # Show filtering stats
     print(f"\nTest Data Filtering Stats:")
