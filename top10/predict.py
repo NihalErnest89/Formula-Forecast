@@ -96,7 +96,46 @@ def predict_race_top10(drivers_df: pd.DataFrame, model, scaler,
     
     # Return top 10
     top10 = result_df.head(10).copy()
-    
+
+    return top10, result_df
+
+
+def predict_race_postquali(drivers_df: pd.DataFrame, model, scaler, meta, device=None):
+    """
+    Predict a race with the post-quali DELTA model.
+
+    The model outputs each driver's expected DEVIATION from the qualifying
+    order; the final score is grid_rank + delta, so with no signal the
+    prediction gracefully degrades to the quali order itself.
+
+    Args:
+        drivers_df: One row per driver. Must include GridPosition (the ACTUAL
+                    qualifying grid) plus the feature columns in meta['features']
+                    (missing racecraft columns are filled with 0 = neutral).
+        model, scaler, meta: From model_loader.load_postquali_model().
+
+    Returns:
+        (top10, result_df) - same shape as predict_race_top10.
+    """
+    features = meta['features']
+    df = drivers_df.copy()
+    for col in features:
+        if col not in df.columns:
+            df[col] = 0.0  # neutral for racecraft features (mean gain of 0)
+
+    X = df[features].astype(float).values
+    X = handle_nan_values(X)
+    X_scaled = scaler.transform(X)
+    delta = make_predictions(X_scaled, model, 'neural_network', device)
+
+    grid_rank = df['GridPosition'].rank(method='first').values
+    score = grid_rank + np.asarray(delta, dtype=float)
+
+    result_df = drivers_df.copy()
+    result_df['PredictedPosition'] = score
+    result_df = result_df.sort_values('PredictedPosition')
+    result_df['Rank'] = range(1, len(result_df) + 1)
+    top10 = result_df.head(10).copy()
     return top10, result_df
 
 

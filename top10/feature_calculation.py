@@ -2,7 +2,132 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int, 
+
+def _canon_num(x):
+    """Normalize driver number so 4, 4.0, '4' all become '4'."""
+    try:
+        return str(int(float(x)))
+    except (ValueError, TypeError):
+        return str(x)
+
+
+def add_racecraft_features(dfs, driver_window=20, team_window=40):
+    """
+    Add DriverAvgGain / ConstructorAvgGain columns to each DataFrame in dfs.
+
+    Gain = ActualGridPosition - ActualPosition for a race (positive = the
+    driver gained places on Sunday). For every race row, the feature is the
+    rolling mean of the driver's (last `driver_window`) / constructor's (last
+    `team_window`) gains over races STRICTLY BEFORE that race - walk-forward
+    across the combined timeline of all provided frames, so no leakage.
+
+    Used by the post-quali model: these features predict deviations from the
+    qualifying order (racecraft, race pace vs quali pace).
+
+    Args:
+        dfs: list of DataFrames that together span the timeline (e.g.
+             [training_df, test_df]). Modified in place; also returned.
+    """
+    allr = pd.concat(dfs, ignore_index=True)
+    allr = allr.dropna(subset=['ActualGridPosition', 'ActualPosition'])
+    allr['_gain'] = allr['ActualGridPosition'] - allr['ActualPosition']
+    allr['_key'] = allr['Year'] * 100 + allr['RoundNumber']
+
+    hist_d, hist_c = {}, {}
+    d_feat, c_feat = {}, {}
+    for key in sorted(allr['_key'].unique()):
+        race_rows = allr[allr['_key'] == key]
+        for _, row in race_rows.iterrows():
+            dn, tm = _canon_num(row['DriverNumber']), str(row['TeamName'])
+            dh, ch = hist_d.get(dn, []), hist_c.get(tm, [])
+            d_feat[(key, dn)] = float(np.mean(dh[-driver_window:])) if dh else 0.0
+            c_feat[(key, tm)] = float(np.mean(ch[-team_window:])) if ch else 0.0
+        for _, row in race_rows.iterrows():  # update AFTER computing (no leakage)
+            hist_d.setdefault(_canon_num(row['DriverNumber']), []).append(row['_gain'])
+            hist_c.setdefault(str(row['TeamName']), []).append(row['_gain'])
+
+    for df in dfs:
+        keys = df['Year'] * 100 + df['RoundNumber']
+        df['DriverAvgGain'] = [d_feat.get((k, _canon_num(d)), 0.0)
+                               for k, d in zip(keys, df['DriverNumber'])]
+        df['ConstructorAvgGain'] = [c_feat.get((k, str(t)), 0.0)
+                                    for k, t in zip(keys, df['TeamName'])]
+
+    # Current (as of the end of the timeline) values, for FUTURE race features
+    latest_driver = {dn: float(np.mean(h[-driver_window:])) for dn, h in hist_d.items()}
+    latest_team = {tm: float(np.mean(h[-team_window:])) for tm, h in hist_c.items()}
+    return dfs, latest_driver, latest_team
+
+
+def add_elo_features(dfs, k=24, start=1500.0):
+    """
+    Add DriverElo / ConstructorElo columns: walk-forward Elo ratings computed
+    from pairwise finishing order over the combined timeline of all frames.
+
+    Elo adapts race-by-race (unlike season points, which lag), which makes it
+    valuable for the PRE-QUALI model - especially early in a new regulation
+    era. Ratings for each race use only races strictly before it (no leakage).
+
+    Returns (dfs, latest_driver_elo, latest_team_elo); the latest dicts are
+    used to attach current ratings to FUTURE race feature rows.
+    """
+    allr = pd.concat(dfs, ignore_index=True)
+    allr['_key'] = allr['Year'] * 1000 + allr['RoundNumber']
+    allr['_dn'] = allr['DriverNumber'].apply(_canon_num)
+    elo_d, elo_c = {}, {}
+    feat_d, feat_c = {}, {}
+    for key in sorted(allr['_key'].unique()):
+        rows = allr[allr['_key'] == key]
+        for _, row in rows.iterrows():
+            feat_d[(key, row['_dn'])] = elo_d.get(row['_dn'], start)
+            feat_c[(key, str(row['TeamName']))] = elo_c.get(str(row['TeamName']), start)
+        fin = rows.dropna(subset=['ActualPosition']).sort_values('ActualPosition')
+        dns = fin['_dn'].tolist()
+        n = len(dns)
+        if n >= 2:
+            kk = k / (n - 1)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    ra, rb = elo_d.get(dns[i], start), elo_d.get(dns[j], start)
+                    ea = 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
+                    elo_d[dns[i]] = ra + kk * (1 - ea)
+                    elo_d[dns[j]] = rb - kk * (1 - ea)
+        teams = fin.groupby('TeamName')['ActualPosition'].mean().sort_values()
+        tn = [str(t) for t in teams.index.tolist()]
+        if len(tn) >= 2:
+            kk = k / (len(tn) - 1)
+            for i in range(len(tn)):
+                for j in range(i + 1, len(tn)):
+                    ra, rb = elo_c.get(tn[i], start), elo_c.get(tn[j], start)
+                    ea = 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
+                    elo_c[tn[i]] = ra + kk * (1 - ea)
+                    elo_c[tn[j]] = rb - kk * (1 - ea)
+    for df in dfs:
+        keys = df['Year'] * 1000 + df['RoundNumber']
+        dns = df['DriverNumber'].apply(_canon_num)
+        df['DriverElo'] = [feat_d.get((k_, d), start) for k_, d in zip(keys, dns)]
+        df['ConstructorElo'] = [feat_c.get((k_, str(t)), start)
+                                for k_, t in zip(keys, df['TeamName'])]
+    return dfs, dict(elo_d), dict(elo_c)
+
+
+def add_overqual_features(df):
+    """
+    Add OverQual / OverQualXCar to a frame that has GridPosition set to the
+    ACTUAL qualifying grid and SeasonAvgGrid set to the season-average grid.
+
+    OverQual = actual grid - season-average grid: positive means the driver
+    starts further back than usual (grid penalty / bad quali) and tends to
+    recover places; negative means an over-performing quali that often
+    regresses. OverQualXCar amplifies the recovery signal for strong cars
+    (a front-running car starting far back charges through the field).
+    """
+    df['OverQual'] = df['GridPosition'] - df['SeasonAvgGrid']
+    df['OverQualXCar'] = df['OverQual'].clip(lower=0) * (11 - df['ConstructorStanding'].clip(1, 10))
+    return df
+
+
+def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int,
                                     track_name: str, training_df: pd.DataFrame = None):
     """
     Calculate features for a future race using data from all completed races up to this point.

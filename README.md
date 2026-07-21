@@ -1,6 +1,6 @@
 # F1 Race Position Prediction
 
-Predict Formula One race finishing positions using deep neural networks based on driver performance features
+Predict Formula One race finishing positions using deep neural networks based on driver performance features.
 
 ## Overview
 

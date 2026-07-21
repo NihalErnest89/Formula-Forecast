@@ -4,6 +4,7 @@ import { useRaces } from './hooks/useRaces';
 import NavTabs from './components/NavTabs';
 import PredictionsView from './components/PredictionsView';
 import SimulatorView from './components/SimulatorView';
+import StandingsView from './components/StandingsView';
 
 function AboutView() {
   return (
@@ -19,6 +20,12 @@ function AboutView() {
         <p>
           Browse any race and compare the model's predicted order against the actual result, with
           per-driver accuracy and an optional filtered view that excludes DNFs and large grid drops.
+        </p>
+        <h3>Standings</h3>
+        <p>
+          Projected championship standings: points already scored in completed races, plus
+          model-predicted points for every remaining race, accumulated into a final championship
+          order. Movement arrows show how the projection differs from the current standings.
         </p>
         <h3>Simulator</h3>
         <p>
@@ -51,6 +58,9 @@ function App() {
 
         {activeTab === 'predictions' && (
           <PredictionsView races={races} uniqueYears={uniqueYears} />
+        )}
+        {activeTab === 'standings' && (
+          <StandingsView uniqueYears={uniqueYears} />
         )}
         {activeTab === 'simulator' && (
           <SimulatorView races={races} uniqueYears={uniqueYears} />

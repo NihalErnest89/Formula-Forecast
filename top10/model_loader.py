@@ -82,17 +82,18 @@ def make_predictions(X_scaled: np.ndarray, model, model_type: str, device=None) 
 class F1NeuralNetwork(nn.Module):
     """Neural Network model definition (must match training - regression)."""
     
-    def __init__(self, input_size=9, hidden_sizes=[128, 64, 32], dropout_rate=0.4, equal_init=False):
+    def __init__(self, input_size=9, hidden_sizes=[64, 32], dropout_rate=0.4, equal_init=False):
         super(F1NeuralNetwork, self).__init__()
-        
+
         layers = []
         prev_size = input_size
-        
+
+        # Must match top10/train.py: Linear -> BatchNorm -> ReLU -> Dropout
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(prev_size, hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(nn.ReLU())
             layers.append(nn.Dropout(dropout_rate))
-            layers.append(nn.BatchNorm1d(hidden_size))
             prev_size = hidden_size
         
         layers.append(nn.Linear(prev_size, 1))
@@ -104,6 +105,78 @@ class F1NeuralNetwork(nn.Module):
         if output.dim() > 1:
             return output.squeeze(-1)  # Squeeze last dimension only
         return output.squeeze()
+
+
+def load_delta_ensemble(model_dir, scaler_name, meta_name, fallback_model_name=None):
+    """
+    Shared loader for delta-model ensembles (post-quali and pre-quali).
+    Returns (model_or_models, scaler, meta) or (None, None, None).
+    """
+    import json as _json
+
+    if model_dir is None:
+        script_dir = Path(__file__).parent
+        model_dir = script_dir.parent / 'models'
+    else:
+        model_dir = Path(model_dir)
+
+    scaler_path = model_dir / scaler_name
+    meta_path = model_dir / meta_name
+    model_path = model_dir / fallback_model_name if fallback_model_name else None
+    if not scaler_path.exists() or not meta_path.exists():
+        return None, None, None
+
+    try:
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            meta = _json.load(f)
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
+        device = torch.device('cpu')
+
+        # Ensemble (preferred): meta lists the member files; deltas are averaged
+        # at prediction time (make_predictions handles model lists)
+        member_paths = [model_dir / f for f in meta.get('ensemble_files', [])]
+        member_paths = [p for p in member_paths if p.exists()]
+        if not member_paths and model_path is not None and model_path.exists():
+            member_paths = [model_path]
+        if not member_paths:
+            return None, None, None
+
+        n_feats = len(meta.get('features', []))
+        models = []
+        for p in member_paths:
+            checkpoint = torch.load(p, map_location=device)
+            input_size = checkpoint['network.0.weight'].shape[1]
+            if input_size != n_feats:
+                print(f"Warning: delta model {p.name} expects {input_size} features but meta "
+                      f"lists {n_feats} - ignoring. Retrain with top10/train.py.")
+                return None, None, None
+            m = F1NeuralNetwork(input_size=input_size, hidden_sizes=[64, 32], dropout_rate=0.4).to(device)
+            m.load_state_dict(checkpoint)
+            m.eval()
+            models.append(m)
+
+        model = models if len(models) > 1 else models[0]
+        print(f"Loaded delta {'ensemble of ' + str(len(models)) if len(models) > 1 else 'model'} "
+              f"from {meta_name} (input_size={n_feats})")
+        return model, scaler, meta
+    except Exception as e:
+        print(f"Warning: could not load delta model ({meta_name}: {e})")
+        return None, None, None
+
+
+def load_postquali_model(model_dir: str = None):
+    """Post-quali delta ensemble: score = actual-grid rank + mean ensemble delta.
+    Returns (model_or_models, scaler, meta) or (None, None, None)."""
+    return load_delta_ensemble(model_dir, 'scaler_top10_postquali.pkl', 'postquali_meta.json',
+                               fallback_model_name='f1_predictor_model_top10_postquali.pth')
+
+
+def load_prequali_delta_model(model_dir: str = None):
+    """Pre-quali delta ensemble: score = form-order (season-avg grid) rank +
+    mean ensemble delta. Used for future races where no quali data exists.
+    Returns (model_or_models, scaler, meta) or (None, None, None)."""
+    return load_delta_ensemble(model_dir, 'scaler_top10_prequali.pkl', 'prequali_meta.json')
 
 
 def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_fallback: bool = True):
@@ -149,7 +222,7 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
             
             model = F1NeuralNetwork(
                 input_size=input_size,
-                hidden_sizes=[128, 64, 32],
+                hidden_sizes=[64, 32],
                 dropout_rate=0.4
             ).to(device)
             model.load_state_dict(checkpoint)
@@ -213,7 +286,7 @@ def load_model(model_dir: str = None, model_type: str = 'neural_network', auto_f
                 
                 model = F1NeuralNetwork(
                     input_size=input_size,
-                    hidden_sizes=[128, 64, 32],
+                    hidden_sizes=[64, 32],
                     dropout_rate=0.4
                 ).to(device)
                 model.load_state_dict(checkpoint)

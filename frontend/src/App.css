@@ -1785,3 +1785,177 @@
   }
 }
 
+
+/* ===== Standings (Championship Projection) ===== */
+.standings-view {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.standings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.standings-header h2 {
+  margin: 0;
+}
+
+.year-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.year-button {
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.year-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.year-button.active {
+  background: #e10600;
+  border-color: #e10600;
+  color: #fff;
+}
+
+.standings-subtitle {
+  opacity: 0.75;
+  margin: 0.25rem 0 1rem;
+}
+
+.standings-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.standings-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 90px 110px 100px 70px;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.7rem 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border-left: 4px solid transparent;
+}
+
+.standings-table-header {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-left: 4px solid transparent;
+}
+
+.standings-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.standings-pos {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.standings-driver {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.standings-driver-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.standings-team {
+  display: block;
+  font-size: 0.78rem;
+  opacity: 0.65;
+}
+
+.standings-predicted {
+  color: #4caf82;
+}
+
+.standings-projected {
+  font-weight: 700;
+}
+
+.standings-move.up { color: #4caf82; }
+.standings-move.down { color: #e10600; }
+.standings-move.flat { opacity: 0.4; }
+.standings-move { text-align: right; font-size: 0.9rem; }
+
+.standings-note {
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  opacity: 0.6;
+}
+
+/* Compact standings on small screens: hide predicted/move columns */
+@media (max-width: 640px) {
+  .standings-row {
+    grid-template-columns: 36px 1fr 70px 90px;
+  }
+  .standings-row .standings-predicted,
+  .standings-row > .standings-move,
+  .standings-table-header span:nth-child(4),
+  .standings-table-header span:nth-child(6) {
+    display: none;
+  }
+}
+
+/* ===== Mobile nav tabs =====
+   4 tabs no longer fit at default sizing on phones; without these rules the
+   tab row stretched the whole document to ~551px and every page panned
+   sideways. Shrink to fit, and allow the row itself to scroll as a fallback
+   on very narrow screens instead of widening the page. */
+@media (max-width: 768px) {
+  .nav-tabs-inner {
+    padding: 0 0.5rem;
+    gap: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav-tabs-inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-tab {
+    font-size: 0.78rem;
+    letter-spacing: 0.5px;
+    padding: 0.9rem 0.7rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 400px) {
+  .nav-tab {
+    font-size: 0.72rem;
+    letter-spacing: 0.2px;
+    padding: 0.85rem 0.55rem;
+  }
+}

@@ -49,6 +49,12 @@
   box-sizing: border-box;
 }
 
+/* Dark base so nothing white ever shows through (mobile overscroll,
+   address-bar resize, areas beyond the fixed-attachment gradient) */
+html {
+  background: #0f0f0f;
+}
+
 body {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
@@ -62,6 +68,15 @@ body {
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
+}
+
+/* background-attachment: fixed is unreliable on mobile browsers (clipped to
+   the first viewport, late repaints, white flashes when the URL bar
+   collapses) - let the gradient scroll with the page on small screens */
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll;
+  }
 }
 
 body::before {

@@ -43,26 +43,27 @@ class F1NeuralNetwork(nn.Module):
     Deep Neural Network for F1 Position Prediction (Regression).
     
     Architecture:
-    - Input layer: 9 features
-    - Hidden layers: Multiple fully connected layers with ReLU activation
+    - Input layer: 11 features
+    - Hidden layers: Linear -> BatchNorm -> ReLU -> Dropout (standard ordering;
+      3-seed benchmark showed it beats the old ReLU->Dropout->BN ordering)
     - Output layer: Single value (predicted finishing position 1-10)
     """
-    
-    def __init__(self, input_size=9, hidden_sizes=[128, 64, 32], dropout_rate=0.4, equal_init=False):
+
+    def __init__(self, input_size=9, hidden_sizes=[64, 32], dropout_rate=0.4, equal_init=False):
         super(F1NeuralNetwork, self).__init__()
-        
+
         self.input_size = input_size
         self.equal_init = equal_init
-        
+
         layers = []
         prev_size = input_size
-        
+
         # Build hidden layers
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(prev_size, hidden_size))
+            layers.append(nn.BatchNorm1d(hidden_size))
             layers.append(nn.ReLU())
             layers.append(nn.Dropout(dropout_rate))
-            layers.append(nn.BatchNorm1d(hidden_size))
             prev_size = hidden_size
         
         # Output layer: single value for position prediction
@@ -405,7 +406,7 @@ def get_feature_importance(model, feature_names, device):
 
 def train_model(X_train, y_train, X_val, y_val,
                 epochs=300, batch_size=32, learning_rate=0.001, device='cpu',
-                hidden_sizes=[128, 64, 32], feature_names=None, early_stop_patience=None, 
+                hidden_sizes=[64, 32], feature_names=None, early_stop_patience=None, 
                 track_weights=True, **kwargs):
     """Train the neural network model."""
     train_dataset = F1Dataset(X_train, y_train)
@@ -674,7 +675,7 @@ def run_experiment(selected_features, max_epochs: int = 80) -> dict:
     input_size = X_train_scaled.shape[1]
     model = F1NeuralNetwork(
         input_size=input_size,
-        hidden_sizes=[128, 64, 32],
+        hidden_sizes=[64, 32],
         dropout_rate=0.4,
         equal_init=False,
     ).to(device)
@@ -731,6 +732,97 @@ def run_experiment(selected_features, max_epochs: int = 80) -> dict:
         "within_2_pct": float(test_w2),
         "within_3_pct": float(test_w3),
     }
+
+
+# ============================================================================
+# POST-QUALI DELTA MODEL
+# Predicts the DEVIATION from qualifying order (finish - grid rank) instead of
+# absolute position, so the model starts from the strong quali-order baseline
+# and learns corrections. Benchmark (json/beat_the_grid.json): ranked test MAE
+# 1.126 vs 1.159 naive quali order vs 1.179 absolute-target model.
+# ============================================================================
+
+def build_delta_races(df, feats, medians):
+    """Group rows into per-race dicts with features, renumbered finish, and
+    grid-rank base. Applies the same filters as prepare_features_and_labels."""
+    races = []
+    for (yr, rnd), g in df.groupby(['Year', 'RoundNumber']):
+        g = g[(g['ActualPosition'] <= 10) & (~g['IsDNF'].fillna(False))].copy()
+        g = g.dropna(subset=['ActualPosition', 'GridPosition'])
+        g = g[(g['ActualPosition'] - g['GridPosition']) <= 6]
+        if len(g) < 5:
+            continue
+        g['fin'] = g['ActualPosition'].rank(method='first')
+        g['base'] = g['GridPosition'].rank(method='first')
+        X = g[feats].copy()
+        for c in feats:
+            X[c] = X[c].fillna(medians[c])
+        races.append({'year': yr, 'X': X.values.astype(np.float32),
+                      'fin': g['fin'].values.astype(np.float32),
+                      'base': g['base'].values.astype(np.float32)})
+    return races
+
+
+def ranked_eval_delta(model, races, scaler):
+    """Evaluate a delta model (or ensemble list of models - deltas averaged)
+    with per-race ranking, matching how the site displays predictions.
+    Returns dict of MAE/exact/W1/W3/winner%."""
+    models = model if isinstance(model, list) else [model]
+    errs, winner_hits = [], 0
+    for m in models:
+        m.eval()
+    with torch.no_grad():
+        for r in races:
+            X = torch.FloatTensor(scaler.transform(r['X']))
+            delta = np.mean([m(X).numpy() for m in models], axis=0)
+            score = r['base'] + delta
+            rank = pd.Series(score).rank(method='first').values
+            errs.extend(np.abs(rank - r['fin']).tolist())
+            winner_hits += int(r['fin'][np.argmin(rank)] == 1)
+    e = np.array(errs)
+    return {'mae': float(e.mean()), 'exact': float((e == 0).mean() * 100),
+            'w1': float((e <= 1).mean() * 100), 'w3': float((e <= 3).mean() * 100),
+            'winner': float(winner_hits / max(len(races), 1) * 100)}
+
+
+def train_postquali_delta(races_tr, races_va, input_size, scaler, seed=42,
+                          epochs=200, patience_limit=25):
+    """Race-batched training on the delta target with ranked-MAE early stopping."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    model = F1NeuralNetwork(input_size=input_size, hidden_sizes=[64, 32], dropout_rate=0.4)
+    optimizer = optim.Adam(model.parameters(), lr=0.003, weight_decay=2e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
+                                                     factor=0.5, patience=10, min_lr=1e-5)
+    huber = nn.HuberLoss(delta=1.0)
+    best, best_state, patience = float('inf'), None, 0
+    order = np.arange(len(races_tr))
+    for epoch in range(epochs):
+        model.train()
+        np.random.shuffle(order)
+        for i in order:
+            r = races_tr[i]
+            X = torch.FloatTensor(scaler.transform(r['X']))
+            fin = torch.FloatTensor(r['fin'])
+            base = torch.FloatTensor(r['base'])
+            loss = huber(model(X), fin - base)
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+        va = ranked_eval_delta(model, races_va, scaler)
+        scheduler.step(va['mae'])
+        if va['mae'] < best:
+            best = va['mae']
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            patience = 0
+        else:
+            patience += 1
+            if patience >= patience_limit:
+                break
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return model
 
 
 def main():
@@ -878,7 +970,7 @@ def main():
         input_size = X_train_fold_scaled.shape[1]
         model = F1NeuralNetwork(
             input_size=input_size,
-            hidden_sizes=[128, 64, 32],
+            hidden_sizes=[64, 32],
             dropout_rate=0.4,  # Increased regularization
             equal_init=False  # Use He/Kaiming initialization (optimal for ReLU)
         ).to(device)
@@ -1091,7 +1183,7 @@ def main():
             X_train_10_scaled, y_train_all,
             X_val_10_scaled, y_val_split,
             epochs=300, batch_size=32, learning_rate=0.005, device=device,
-            hidden_sizes=[128, 64, 32], feature_names=feature_names_10,
+            hidden_sizes=[64, 32], feature_names=feature_names_10,
             exact_weight=5.0, early_stop_patience=50
         )
         test_loader_10 = DataLoader(F1Dataset(X_test_10_scaled, y_test), batch_size=32, shuffle=False)
@@ -1102,10 +1194,10 @@ def main():
         print("Training full model (11 features, with WinsLast3Years)...")
     
     # Architecture: Optimized based on training improvements test
-    # [128, 64, 32] - Best configuration (TrackID removed - had lowest importance 0.0993)
+    # [64, 32] with BN->ReLU->Dropout ordering - won 3-seed benchmark vs [128,64,32] legacy arch
     # Using increased regularization: LR 0.005, Dropout 0.4, Weight Decay 2e-4
     # Position-aware loss to improve exact position accuracy
-    hidden_sizes = [128, 64, 32]
+    hidden_sizes = [64, 32]
     
     # Train single model (ensemble testing showed minimal benefit - single model performs better on exact match)
     print("\n" + "=" * 60)
@@ -1318,6 +1410,140 @@ def main():
     print("=" * 60)
     save_model(model, scaler, None, model_index=None)
     print(f"\nSaved model")
+
+    # ------------------------------------------------------------------
+    # POST-QUALI DELTA MODEL: GridPosition = ACTUAL qualifying grid, target =
+    # deviation from quali order (finish - grid rank), + racecraft features.
+    # Used for races where quali results are known. The average-grid model
+    # above remains the pre-quali / future-race predictor.
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("TRAINING POST-QUALI DELTA MODEL (actual grid + racecraft features)")
+    print("=" * 60)
+
+    from config import FEATURE_COLS_POSTQUALI, POSTQUALI_ENSEMBLE_SEEDS
+    from feature_calculation import add_racecraft_features, add_overqual_features
+
+    pq_train_df = training_df.copy()
+    pq_test_df = test_df.copy()
+    for pq_df in (pq_train_df, pq_test_df):
+        # Preserve the season-average grid BEFORE swapping in the actual grid
+        # (needed for the OverQual features), then swap
+        pq_df['SeasonAvgGrid'] = pq_df['GridPosition']
+        if 'ActualGridPosition' in pq_df.columns:
+            pq_df['GridPosition'] = pq_df['ActualGridPosition'].fillna(pq_df['GridPosition'])
+    add_racecraft_features([pq_train_df, pq_test_df])
+    for pq_df in (pq_train_df, pq_test_df):
+        add_overqual_features(pq_df)
+
+    pq_feats = [f for f in FEATURE_COLS_POSTQUALI if f in pq_train_df.columns]
+    pq_medians = {c: pq_train_df[c].median() for c in pq_feats}
+    races_tr = build_delta_races(pq_train_df, pq_feats, pq_medians)
+    races_va = [r for r in races_tr if r['year'] == pq_train_df['Year'].max()]
+    races_te = build_delta_races(pq_test_df, pq_feats, pq_medians) if len(pq_test_df) else []
+
+    scaler_pq = StandardScaler().fit(np.vstack([r['X'] for r in races_tr]))
+    print(f"  Races: {len(races_tr)} train ({len(races_va)} validation), {len(races_te)} test")
+    print(f"  Features ({len(pq_feats)}): {pq_feats}")
+    print(f"  Ensemble: {len(POSTQUALI_ENSEMBLE_SEEDS)} seeds {POSTQUALI_ENSEMBLE_SEEDS}")
+
+    pq_models = []
+    for seed in POSTQUALI_ENSEMBLE_SEEDS:
+        pq_models.append(train_postquali_delta(races_tr, races_va, len(pq_feats), scaler_pq, seed=seed))
+        print(f"  Trained ensemble member seed={seed}")
+
+    pq_test_metrics = None
+    if races_te:
+        pq_test_metrics = ranked_eval_delta(pq_models, races_te, scaler_pq)
+        # Naive quali-order baseline on the identical protocol - the bar to beat
+        naive_errs, naive_win = [], 0
+        for r in races_te:
+            naive_errs.extend(np.abs(r['base'] - r['fin']).tolist())
+            naive_win += int(r['fin'][np.argmin(r['base'])] == 1)
+        ne = np.array(naive_errs)
+        print(f"\nPost-Quali Delta Model - Ranked Test Metrics (vs naive quali order):")
+        print(f"  MAE:    {pq_test_metrics['mae']:.3f} vs {ne.mean():.3f} naive")
+        print(f"  Exact:  {pq_test_metrics['exact']:.1f}% vs {(ne == 0).mean() * 100:.1f}% naive")
+        print(f"  W1:     {pq_test_metrics['w1']:.1f}% vs {(ne <= 1).mean() * 100:.1f}% naive")
+        print(f"  W3:     {pq_test_metrics['w3']:.1f}% vs {(ne <= 3).mean() * 100:.1f}% naive")
+        print(f"  Winner: {pq_test_metrics['winner']:.0f}% vs {naive_win / len(races_te) * 100:.0f}% naive")
+
+    models_dir = Path(__file__).parent.parent / 'models'
+    ensemble_files = []
+    for seed, m in zip(POSTQUALI_ENSEMBLE_SEEDS, pq_models):
+        fname = f'f1_predictor_model_top10_postquali_s{seed}.pth'
+        torch.save(m.state_dict(), models_dir / fname)
+        ensemble_files.append(fname)
+    # Legacy single-model path kept pointing at the first member for back-compat
+    torch.save(pq_models[0].state_dict(), models_dir / 'f1_predictor_model_top10_postquali.pth')
+    with open(models_dir / 'scaler_top10_postquali.pkl', 'wb') as f:
+        pickle.dump(scaler_pq, f)
+    with open(models_dir / 'postquali_meta.json', 'w', encoding='utf-8') as f:
+        json.dump({'mode': 'delta', 'features': pq_feats,
+                   'ensemble_files': ensemble_files,
+                   'description': 'Score = grid_rank + mean(ensemble deltas); '
+                                  'deviation-from-quali-order ensemble'}, f, indent=2)
+    print(f"Post-quali delta ensemble ({len(ensemble_files)} models) saved to {models_dir}")
+    print(f"Post-quali meta saved to {models_dir / 'postquali_meta.json'}")
+
+    # ------------------------------------------------------------------
+    # PRE-QUALI DELTA MODEL: no qualifying info exists yet, so the prior
+    # order is the season-average grid (form order). Base = form rank,
+    # target = deviation from it. Elo ratings included (they help pre-quali
+    # where no weekend-specific pace signal exists). Used for FUTURE races.
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("TRAINING PRE-QUALI DELTA MODEL (form order + Elo)")
+    print("=" * 60)
+
+    from config import FEATURE_COLS_PREQUALI, PREQUALI_ENSEMBLE_SEEDS
+    from feature_calculation import add_elo_features
+
+    pre_train_df = training_df.copy()
+    pre_test_df = test_df.copy()
+    # GridPosition stays the season-average grid (NO quali info)
+    add_racecraft_features([pre_train_df, pre_test_df])
+    add_elo_features([pre_train_df, pre_test_df])
+
+    pre_feats = [f for f in FEATURE_COLS_PREQUALI if f in pre_train_df.columns]
+    pre_medians = {c: pre_train_df[c].median() for c in pre_feats}
+    races_tr_pre = build_delta_races(pre_train_df, pre_feats, pre_medians)
+    races_va_pre = [r for r in races_tr_pre if r['year'] == pre_train_df['Year'].max()]
+    races_te_pre = build_delta_races(pre_test_df, pre_feats, pre_medians) if len(pre_test_df) else []
+
+    scaler_pre = StandardScaler().fit(np.vstack([r['X'] for r in races_tr_pre]))
+    print(f"  Races: {len(races_tr_pre)} train ({len(races_va_pre)} validation), {len(races_te_pre)} test")
+    print(f"  Features ({len(pre_feats)}): {pre_feats}")
+
+    pre_models = []
+    for seed in PREQUALI_ENSEMBLE_SEEDS:
+        pre_models.append(train_postquali_delta(races_tr_pre, races_va_pre, len(pre_feats), scaler_pre, seed=seed))
+        print(f"  Trained ensemble member seed={seed}")
+
+    pre_test_metrics = None
+    if races_te_pre:
+        pre_test_metrics = ranked_eval_delta(pre_models, races_te_pre, scaler_pre)
+        naive_errs_pre = []
+        for r in races_te_pre:
+            naive_errs_pre.extend(np.abs(r['base'] - r['fin']).tolist())
+        ne = np.array(naive_errs_pre)
+        print(f"\nPre-Quali Delta Ensemble - Ranked Test Metrics (vs naive form order):")
+        print(f"  MAE:   {pre_test_metrics['mae']:.3f} vs {ne.mean():.3f} naive")
+        print(f"  Exact: {pre_test_metrics['exact']:.1f}% vs {(ne == 0).mean() * 100:.1f}% naive")
+        print(f"  W1:    {pre_test_metrics['w1']:.1f}% vs {(ne <= 1).mean() * 100:.1f}% naive")
+
+    pre_ensemble_files = []
+    for seed, m in zip(PREQUALI_ENSEMBLE_SEEDS, pre_models):
+        fname = f'f1_predictor_model_top10_prequali_s{seed}.pth'
+        torch.save(m.state_dict(), models_dir / fname)
+        pre_ensemble_files.append(fname)
+    with open(models_dir / 'scaler_top10_prequali.pkl', 'wb') as f:
+        pickle.dump(scaler_pre, f)
+    with open(models_dir / 'prequali_meta.json', 'w', encoding='utf-8') as f:
+        json.dump({'mode': 'delta', 'features': pre_feats,
+                   'ensemble_files': pre_ensemble_files,
+                   'description': 'Score = form_rank (season-avg grid) + mean(ensemble deltas)'}, f, indent=2)
+    print(f"Pre-quali delta ensemble ({len(pre_ensemble_files)} models) saved to {models_dir}")
     
     # Save results - convert all numpy types to native Python types for JSON serialization
     def convert_to_native(obj):
@@ -1390,6 +1616,8 @@ def main():
             'within_2': float(test_w2_all) if 'test_w2_all' in locals() and test_w2_all else None,
             'within_3': float(test_w3_all) if 'test_w3_all' in locals() and test_w3_all else None,
         },
+        'test_postquali': pq_test_metrics,
+        'test_prequali_delta': pre_test_metrics,
         'feature_importances': {k: float(v) for k, v in feature_importances.items()},
         'model_architecture': {
             'input_size': X_train_split.shape[1],

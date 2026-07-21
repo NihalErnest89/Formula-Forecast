@@ -34,6 +34,18 @@ def _canonical_driver_num(x):
 RAW_DATA_DIR = Path(__file__).parent / 'data' / 'raw'
 
 
+def _has_valid_results(df: pd.DataFrame) -> bool:
+    """True if a race result block has real finishing-position data.
+
+    FastF1 returns a full driver list even when the Ergast/Jolpica results API
+    is rate-limited (429) or has no data yet, leaving Position/Status all-NaN.
+    Such placeholder rows must NOT be treated as a collected race.
+    """
+    if df is None or df.empty or 'Position' not in df.columns:
+        return False
+    return df['Position'].notna().any()
+
+
 def _event_is_past(event) -> bool:
     """True if the event has already taken place (so results should exist)."""
     ev_date = event.get('EventDate', None)
@@ -45,7 +57,7 @@ def _event_is_past(event) -> bool:
     return ts <= pd.Timestamp.now()
 
 
-def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False) -> pd.DataFrame:
+def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False) -> Tuple[pd.DataFrame, int]:
     """
     Get all race data for a given season (incrementally).
 
@@ -59,7 +71,9 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
         force_refresh: If True, ignore the local snapshot and refetch everything
 
     Returns:
-        DataFrame with race results for the season
+        Tuple of (DataFrame with race results, number of NEWLY fetched races).
+        The new-race count lets callers skip the expensive feature
+        reorganization when nothing changed.
     """
     # Load existing snapshot for incremental collection
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,7 +85,14 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
         except Exception as e:
             print(f"  Warning: Could not read snapshot {raw_path} ({e}); refetching season.")
             existing = pd.DataFrame()
-    done_rounds = set(existing['RoundNumber'].unique()) if not existing.empty else set()
+    # A round counts as "done" only if its snapshot rows have real finishing
+    # positions. Rounds saved with empty results (API was unavailable at fetch
+    # time) are deliberately NOT marked done, so they get refetched next run.
+    done_rounds = set()
+    if not existing.empty and 'RoundNumber' in existing.columns:
+        for rnd, grp in existing.groupby('RoundNumber'):
+            if _has_valid_results(grp):
+                done_rounds.add(rnd)
 
     schedule = None
 
@@ -88,11 +109,11 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
             else:
                 print(f"  Error: Failed to load schedule for {year} after {max_retries} attempts: {e}")
                 print(f"  Skipping season {year}. This may be due to API issues or network problems.")
-                return existing
+                return existing, 0
 
     if schedule is None or schedule.empty:
         print(f"  Warning: No schedule found for {year}")
-        return existing
+        return existing, 0
 
     # Skip pre-season testing events: they have RoundNumber 0 and their "results"
     # are meaningless for race prediction (previously they were collected and even
@@ -102,6 +123,7 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
     all_races = []
     skipped_cached = 0
     skipped_future = 0
+    skipped_no_results = 0
 
     for _, event in schedule.iterrows():
         # Incremental: skip rounds we already have on disk
@@ -192,19 +214,34 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
                     except Exception:
                         pass
                 
-                all_races.append(pd.DataFrame(results))
+                results_df = pd.DataFrame(results)
+                # Only keep races that actually have finishing-position data.
+                # Placeholder rows (API unavailable) are dropped so they are not
+                # persisted and get retried on the next run.
+                if _has_valid_results(results_df):
+                    all_races.append(results_df)
+                else:
+                    skipped_no_results += 1
+                    print(f"  Note: {event['EventName']} {year} (R{event['RoundNumber']}) "
+                          f"returned no finishing data yet - will retry next run")
         except Exception as e:
             print(f"  Warning: Error loading race {event.get('EventName', 'Unknown')} {year}: {e}")
             continue
 
-    if skipped_cached or skipped_future or all_races:
+    if skipped_cached or skipped_future or skipped_no_results or all_races:
         print(f"  {year}: {len(all_races)} new races fetched, "
-              f"{skipped_cached} loaded from snapshot, {skipped_future} future races skipped")
+              f"{skipped_cached} loaded from snapshot, {skipped_future} future races skipped"
+              + (f", {skipped_no_results} awaiting results" if skipped_no_results else ""))
+
+    # Drop any stale placeholder rows for rounds we just refetched with real data
+    refetched_rounds = {r for df in all_races for r in df['RoundNumber'].unique()}
+    if not existing.empty and refetched_rounds and 'RoundNumber' in existing.columns:
+        existing = existing[~existing['RoundNumber'].isin(refetched_rounds)]
 
     # Merge newly fetched races with the existing snapshot and persist
     frames = ([existing] if not existing.empty else []) + all_races
     if not frames:
-        return pd.DataFrame()
+        return pd.DataFrame(), 0
 
     season_df = pd.concat(frames, ignore_index=True)
 
@@ -220,7 +257,7 @@ def get_season_data(year: int, max_retries: int = 3, force_refresh: bool = False
             print(f"  Snapshot updated: {raw_path}")
         except Exception as e:
             print(f"  Warning: Could not save snapshot {raw_path}: {e}")
-    return season_df
+    return season_df, len(all_races)
 
 
 def calculate_season_points(driver_results: pd.DataFrame) -> Dict[str, int]:
@@ -644,7 +681,8 @@ def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_y
 
 
 def organize_data(training_years: List[int], test_years: List[int],
-                  force_refresh: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                  force_refresh: bool = False,
+                  force_reorganize: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Collect and organize F1 data into features and labels.
 
@@ -652,10 +690,16 @@ def organize_data(training_years: List[int], test_years: List[int],
         training_years: List of years for training data (e.g., [2020, 2021, 2022, 2023, 2024, 2025])
         test_years: List of years for test data (e.g., [2026])
         force_refresh: If True, ignore local season snapshots and refetch everything
+        force_reorganize: If True, rebuild feature CSVs even when no new races
+            were fetched (use after changing feature engineering code)
 
     Returns:
-        Tuple of (training_data, test_data) DataFrames
+        Tuple of (training_data, test_data) DataFrames, or (None, None) when no
+        new races were fetched and the existing feature CSVs are already current
+        (the expensive feature organization step is skipped).
     """
+    total_new_races = 0
+
     print("Collecting training data...")
     training_races = []
 
@@ -663,7 +707,8 @@ def organize_data(training_years: List[int], test_years: List[int],
     successful_years = []
     for year in training_years:
         print(f"  Loading season {year}...")
-        season_data = get_season_data(year, force_refresh=force_refresh)
+        season_data, n_new = get_season_data(year, force_refresh=force_refresh)
+        total_new_races += n_new
         if not season_data.empty:
             training_races.append(season_data)
             successful_years.append(year)
@@ -689,13 +734,22 @@ def organize_data(training_years: List[int], test_years: List[int],
     test_races_list = []
     for ty in test_years:
         print(f"Collecting test data for {ty}...")
-        season_df = get_season_data(ty, force_refresh=force_refresh)
+        season_df, n_new = get_season_data(ty, force_refresh=force_refresh)
+        total_new_races += n_new
         if not season_df.empty:
             test_races_list.append(season_df)
     test_data = pd.concat(test_races_list, ignore_index=True) if test_races_list else pd.DataFrame()
-    
+
+    # Skip the expensive feature-organization pass when nothing new was fetched
+    # and the feature CSVs already exist (they can only depend on the snapshots)
+    output_csvs_exist = (Path('data') / 'training_data.csv').exists() and (Path('data') / 'test_data.csv').exists()
+    if total_new_races == 0 and output_csvs_exist and not force_reorganize and not force_refresh:
+        print("\nNo new races fetched - existing feature CSVs are current, skipping feature organization.")
+        print("(Use 'python collect_data.py --reorganize' to force a rebuild after feature-code changes.)")
+        return None, None
+
     # Organize features and labels
-    print("Organizing features and labels...")
+    print(f"Organizing features and labels ({total_new_races} new races)...")
     
     # Dictionary to track historical sector times per (track, driver) for accumulation
     training_features = []
@@ -1280,9 +1334,10 @@ def main():
     """Main function to collect and organize F1 data."""
     import sys
     force_refresh = '--refresh' in sys.argv
+    force_reorganize = '--reorganize' in sys.argv
 
     # Training data from 2020 onwards (expanded dataset for better generalization)
-    training_years = [2020, 2021, 2022, 2023, 2024]
+    training_years = [2018, 2019, 2020, 2021, 2022, 2023, 2024]
     # Test years (both appear in predict race selector)
     test_years = [2025, 2026]
 
@@ -1299,15 +1354,21 @@ def main():
     print()
     
     try:
-        training_df, test_df = organize_data(training_years, test_years, force_refresh=force_refresh)
+        training_df, test_df = organize_data(training_years, test_years,
+                                             force_refresh=force_refresh,
+                                             force_reorganize=force_reorganize)
+        if training_df is None:
+            print("\nData collection complete (no changes - feature CSVs untouched).")
+            return
+
         save_data(training_df, test_df)
-        
+
         print("\nData collection complete!")
         print(f"\nTraining data summary:")
-        feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition', 
+        feature_cols = ['SeasonPoints', 'SeasonAvgFinish', 'HistoricalTrackAvgPosition',
                        'ConstructorPoints', 'ConstructorStanding', 'GridPosition', 'RecentForm']
         print(training_df[feature_cols + ['DriverNumber']].describe())
-        
+
     except Exception as e:
         print(f"Error during data collection: {e}")
         raise
