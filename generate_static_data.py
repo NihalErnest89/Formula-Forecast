@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from top10.model_loader import load_model, load_postquali_model, load_prequali_delta_model
 from top10.predict import predict_race_top10, predict_race_postquali
 from top10.feature_calculation import (calculate_future_race_features, add_racecraft_features,
-                                       add_overqual_features, add_elo_features)
+                                       add_overqual_features, add_elo_features,
+                                       add_affinity_features)
 from top10.data_utils import load_f1_data, build_race_list, format_predictions
 
 OUT_DIR = Path(__file__).parent / 'frontend' / 'public' / 'data'
@@ -123,6 +124,7 @@ def generate_race_prediction(race, test_df, training_df, model, scaler, model_ty
         if not used_quali_grid and pre_model is not None:
             # Future race without quali: pre-quali delta ensemble over form order
             attach_latest(race_df)
+            add_affinity_features(race_df)
             model_used = 'prequali-delta'
     else:
         # Completed race: qualifying is known, so use the actual grid with the

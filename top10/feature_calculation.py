@@ -111,6 +111,24 @@ def add_elo_features(dfs, k=24, start=1500.0):
     return dfs, dict(elo_d), dict(elo_c)
 
 
+def add_affinity_features(df):
+    """
+    Track-affinity features for the pre-quali model: how much better/worse a
+    driver (or constructor) historically runs at THIS track compared to their
+    overall form. Negative = better here than usual. These are the only
+    race-specific signals available before qualifying, so they drive the
+    justified differentiation between future-race predictions.
+
+    DriverTrackAffinity is 0 when the driver has no history at the track
+    (HistoricalTrackAvgPosition uses a 10.0 fallback for unseen tracks).
+    """
+    hist = df['HistoricalTrackAvgPosition']
+    no_hist = (hist - 10.0).abs() < 1e-9
+    df['DriverTrackAffinity'] = np.where(no_hist, 0.0, hist - df['SeasonAvgFinish'])
+    df['ConstrTrackAffinity'] = df['ConstructorTrackAvg'] - df['SeasonAvgFinish']
+    return df
+
+
 def add_overqual_features(df):
     """
     Add OverQual / OverQualXCar to a frame that has GridPosition set to the

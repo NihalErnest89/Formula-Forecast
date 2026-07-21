@@ -42,6 +42,8 @@ FEATURE_COLS_PREQUALI = FEATURE_COLS + [
     'ConstructorAvgGain',
     'DriverElo',
     'ConstructorElo',
+    'DriverTrackAffinity',   # track-specific history vs overall form (accuracy-neutral,
+    'ConstrTrackAffinity',   # adds justified per-track differentiation for future races)
 ]
 PREQUALI_ENSEMBLE_SEEDS = [42, 43, 44, 45, 46]
 

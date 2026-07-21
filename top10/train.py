@@ -1497,13 +1497,16 @@ def main():
     print("=" * 60)
 
     from config import FEATURE_COLS_PREQUALI, PREQUALI_ENSEMBLE_SEEDS
-    from feature_calculation import add_elo_features
+    from feature_calculation import add_elo_features, add_affinity_features
 
     pre_train_df = training_df.copy()
     pre_test_df = test_df.copy()
     # GridPosition stays the season-average grid (NO quali info)
     add_racecraft_features([pre_train_df, pre_test_df])
     add_elo_features([pre_train_df, pre_test_df])
+    for pre_df in (pre_train_df, pre_test_df):
+        pre_df['SeasonAvgGrid'] = pre_df['GridPosition']
+        add_affinity_features(pre_df)
 
     pre_feats = [f for f in FEATURE_COLS_PREQUALI if f in pre_train_df.columns]
     pre_medians = {c: pre_train_df[c].median() for c in pre_feats}
