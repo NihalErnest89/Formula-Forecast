@@ -91,11 +91,37 @@ function PredictionsView({ races, uniqueYears }) {
             <div className="table-header">
               <div className="col-rank">Rank</div>
               <div className="col-driver">Driver</div>
+              <div className="col-gap tooltip-trigger">
+                Gap
+                <span className="tooltip tooltip-left">
+                  <span className="tooltip-content">
+                    Predicted pace gap behind the leader, like a timing tower: short bars =
+                    close fight, long bars = cleared off. Measured in predicted positions.
+                  </span>
+                </span>
+              </div>
               <div className="col-actual">Actual</div>
             </div>
 
-            {(showFiltered ? predictions.predictionsFiltered : predictions.predictionsUnfiltered).map(
-              (pred, idx) => {
+            {(() => {
+              const list = showFiltered
+                ? predictions.predictionsFiltered
+                : predictions.predictionsUnfiltered;
+              const scores = list.map((p) => p.predictedPosition);
+              const leaderScore = scores.length ? scores[0] : 0;
+              const maxGap = scores.length ? Math.max(...scores.map((s) => s - leaderScore)) : 0;
+              return list.map((pred, idx) => {
+                const gapToLeader =
+                  pred.predictedPosition != null ? pred.predictedPosition - leaderScore : null;
+                const interval =
+                  idx === 0
+                    ? null
+                    : pred.predictedPosition != null && list[idx - 1].predictedPosition != null
+                    ? pred.predictedPosition - list[idx - 1].predictedPosition
+                    : null;
+                const barPct =
+                  gapToLeader != null && maxGap > 0 ? (gapToLeader / maxGap) * 100 : 0;
+                pred = { ...pred, _gapToLeader: gapToLeader, _interval: interval, _barPct: barPct };
                 const hasActual = pred.actualPosition !== null && pred.actualPosition !== undefined;
                 const displayRank = showFiltered ? idx + 1 : pred.rank;
                 const posError = hasActual ? Math.abs(displayRank - pred.actualPosition) : null;
@@ -174,6 +200,22 @@ function PredictionsView({ races, uniqueYears }) {
                         })()}
                       </div>
                     </div>
+                    <div className="col-gap">
+                      {pred._gapToLeader != null ? (
+                        idx === 0 ? (
+                          <span className="gap-label leader">Leader</span>
+                        ) : (
+                          <>
+                            <div className="gap-bar-track">
+                              <div className="gap-bar-fill" style={{ width: `${pred._barPct}%` }} />
+                            </div>
+                            <span className="gap-label">+{pred._gapToLeader.toFixed(1)}</span>
+                          </>
+                        )
+                      ) : (
+                        <span className="gap-label">&mdash;</span>
+                      )}
+                    </div>
                     <div
                       className={`col-actual ${errorClass ? `accuracy-${errorClass}` : ''} ${
                         isFiltered ? 'filtered' : ''
@@ -224,8 +266,8 @@ function PredictionsView({ races, uniqueYears }) {
                     </div>
                   </div>
                 );
-              }
-            )}
+              });
+            })()}
           </div>
 
           <div className="predictions-footer">
