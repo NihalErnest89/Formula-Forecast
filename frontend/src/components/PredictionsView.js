@@ -92,12 +92,12 @@ function PredictionsView({ races, uniqueYears }) {
               <div className="col-rank">Rank</div>
               <div className="col-driver">Driver</div>
               <div className="col-gap tooltip-trigger">
-                Behind
+                Raw Position
                 <span className="tooltip tooltip-left">
                   <span className="tooltip-content">
-                    How many predicted positions behind the leader the model rates each
-                    driver (not seconds). Small numbers close together = a tight fight;
-                    big jumps = the model sees clear separation.
+                    The model's raw predicted finishing position before rounding into the
+                    ranking. Values close together mean the model sees a tight fight;
+                    big jumps mean clear separation.
                   </span>
                 </span>
               </div>
@@ -108,13 +108,7 @@ function PredictionsView({ races, uniqueYears }) {
               const list = showFiltered
                 ? predictions.predictionsFiltered
                 : predictions.predictionsUnfiltered;
-              const leaderScore = list.length ? list[0].predictedPosition : 0;
               return list.map((pred, idx) => {
-                const gapToLeader =
-                  pred.predictedPosition != null && leaderScore != null
-                    ? pred.predictedPosition - leaderScore
-                    : null;
-                pred = { ...pred, _gapToLeader: gapToLeader };
                 const hasActual = pred.actualPosition !== null && pred.actualPosition !== undefined;
                 const displayRank = showFiltered ? idx + 1 : pred.rank;
                 const posError = hasActual ? Math.abs(displayRank - pred.actualPosition) : null;
@@ -194,15 +188,9 @@ function PredictionsView({ races, uniqueYears }) {
                       </div>
                     </div>
                     <div className="col-gap">
-                      {pred._gapToLeader != null ? (
-                        idx === 0 ? (
-                          <span className="gap-label leader">Leader</span>
-                        ) : (
-                          <span className="gap-label">+{pred._gapToLeader.toFixed(1)} pos</span>
-                        )
-                      ) : (
-                        <span className="gap-label">&mdash;</span>
-                      )}
+                      <span className="gap-label">
+                        {pred.predictedPosition != null ? pred.predictedPosition.toFixed(2) : '—'}
+                      </span>
                     </div>
                     <div
                       className={`col-actual ${errorClass ? `accuracy-${errorClass}` : ''} ${
