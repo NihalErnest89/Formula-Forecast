@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/Formula-Forecast/static/css/main.08de2dec.css",
-    "main.js": "/Formula-Forecast/static/js/main.2f722727.js",
+    "main.css": "/Formula-Forecast/static/css/main.93e51571.css",
+    "main.js": "/Formula-Forecast/static/js/main.30168f55.js",
     "index.html": "/Formula-Forecast/index.html",
-    "main.08de2dec.css.map": "/Formula-Forecast/static/css/main.08de2dec.css.map",
-    "main.2f722727.js.map": "/Formula-Forecast/static/js/main.2f722727.js.map"
+    "main.93e51571.css.map": "/Formula-Forecast/static/css/main.93e51571.css.map",
+    "main.30168f55.js.map": "/Formula-Forecast/static/js/main.30168f55.js.map"
   },
   "entrypoints": [
-    "static/css/main.08de2dec.css",
-    "static/js/main.2f722727.js"
+    "static/css/main.93e51571.css",
+    "static/js/main.30168f55.js"
   ]
 }
