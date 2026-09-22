@@ -484,7 +484,7 @@ def train_model(X_train, y_train, X_val, y_val,
         if early_stop_patience is not None:
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                best_model_state = model.state_dict().copy()
+                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -494,7 +494,7 @@ def train_model(X_train, y_train, X_val, y_val,
         else:
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                best_model_state = model.state_dict().copy()
+                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
     
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
@@ -701,7 +701,7 @@ def run_experiment(selected_features, max_epochs: int = 80) -> dict:
 
         if val_mae < best_val_mae:
             best_val_mae = val_mae
-            best_state = model.state_dict().copy()
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
             patience = 0
         else:
             patience += 1
@@ -1001,7 +1001,7 @@ def main():
             
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                best_model_state = model.state_dict().copy()
+                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
                 patience = 0
             else:
                 patience += 1

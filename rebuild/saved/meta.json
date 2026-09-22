@@ -1,0 +1,28 @@
+{
+  "features": [
+    "SeasonPoints",
+    "HistoricalTrackAvgPosition",
+    "ConstructorStanding",
+    "ConstructorTrackAvg",
+    "ActualGridPosition",
+    "RecentForm",
+    "CareerWins",
+    "WinsLast3Years",
+    "TrackType"
+  ],
+  "medians": {
+    "SeasonPoints": 45.0,
+    "HistoricalTrackAvgPosition": 10.0,
+    "ConstructorStanding": 4.0,
+    "ConstructorTrackAvg": 8.5,
+    "ActualGridPosition": 6.0,
+    "RecentForm": 8.2,
+    "CareerWins": 1.0,
+    "WinsLast3Years": 0.0,
+    "TrackType": 0.0
+  },
+  "hidden": [
+    64,
+    32
+  ]
+}

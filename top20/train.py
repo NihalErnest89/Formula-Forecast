@@ -606,7 +606,7 @@ def train_model(X_train, y_train, X_val, y_val,
         if early_stop_patience is not None:
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                best_model_state = model.state_dict().copy()  # Save best model
+                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}  # Save best model
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -617,7 +617,7 @@ def train_model(X_train, y_train, X_val, y_val,
             # No early stopping - always save best model
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                best_model_state = model.state_dict().copy()  # Save best model
+                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}  # Save best model
     
     # Load best model state
     if best_model_state is not None:

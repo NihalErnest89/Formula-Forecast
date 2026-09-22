@@ -775,7 +775,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # For first race of season, use previous season's data
             if round_num == 1:
                 # Use previous year's data for first race
-                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                prev_year_data = all_training_data[all_training_data['Year'] == year - 1]
                 if not prev_year_data.empty:
                     season_points = calculate_season_points(prev_year_data)
                     season_standing = calculate_season_standing(prev_year_data)
@@ -848,7 +848,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # Recent form (last 5 races average finish) - captures current momentum
             if round_num == 1:
                 # First race: use previous season's recent form
-                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                prev_year_data = all_training_data[all_training_data['Year'] == year - 1]
                 if not prev_year_data.empty:
                     recent_form = calculate_recent_form(prev_year_data, num_races=5)
                     driver_recent_form = recent_form.get(driver_num, np.nan)
@@ -866,7 +866,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # Calculate new features for improved model
             # 1. PointsGapToLeader: Points gap to championship leader
             if round_num == 1:
-                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                prev_year_data = all_training_data[all_training_data['Year'] == year - 1]
                 if not prev_year_data.empty:
                     prev_season_points = calculate_season_points(prev_year_data)
                     max_points = max(prev_season_points.values()) if prev_season_points else 0
@@ -944,9 +944,9 @@ def organize_data(training_years: List[int], test_years: List[int],
                     # Find teams with the target constructor standing
                     # Calculate standings for the most recent year available
                     latest_year = historical_races['Year'].max()
-                    year_data = historical_races[historical_races['Year'] == latest_year]
-                    if not year_data.empty:
-                        constructor_points = year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
+                    fallback_year_data = historical_races[historical_races['Year'] == latest_year]
+                    if not fallback_year_data.empty:
+                        constructor_points = fallback_year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
                         constructor_standings = {team: rank + 1 for rank, team in enumerate(constructor_points.index)}
                         target_teams = [team for team, standing in constructor_standings.items() if standing == driver_constructor_standing]
                         
@@ -971,7 +971,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # 5. FormTrend: Momentum direction (improving vs declining)
             if round_num == 1:
                 # First race: use previous season's trend
-                prev_year_data = all_training_data[all_training_data['Year'] < year]
+                prev_year_data = all_training_data[all_training_data['Year'] == year - 1]
                 if not prev_year_data.empty:
                     # Get last round of previous season
                     prev_year_sorted = prev_year_data.sort_values('RoundNumber')
@@ -1176,9 +1176,9 @@ def organize_data(training_years: List[int], test_years: List[int],
                     # Find teams with the target constructor standing
                     # Calculate standings for the most recent year available
                     latest_year = historical_races['Year'].max()
-                    year_data = historical_races[historical_races['Year'] == latest_year]
-                    if not year_data.empty:
-                        constructor_points = year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
+                    fallback_year_data = historical_races[historical_races['Year'] == latest_year]
+                    if not fallback_year_data.empty:
+                        constructor_points = fallback_year_data.groupby('TeamName')['Points'].sum().sort_values(ascending=False)
                         constructor_standings = {team: rank + 1 for rank, team in enumerate(constructor_points.index)}
                         target_teams = [team for team, standing in constructor_standings.items() if standing == driver_constructor_standing]
                         
