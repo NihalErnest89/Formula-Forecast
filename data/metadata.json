@@ -1,6 +1,6 @@
 {
-  "training_samples": 2979,
-  "test_samples": 787,
+  "training_samples": 3458,
+  "test_samples": 330,
   "features": [
     "SeasonPoints",
     "SeasonStanding",

@@ -12,9 +12,16 @@ function AboutView() {
       <div className="about-card">
         <h2>About Formula Forecast</h2>
         <p>
-          Formula Forecast predicts F1 finishing positions with a deep neural network trained on
-          FastF1 timing data (2020&ndash;2024). The model is a regularized 3-layer MLP using Dropout,
-          Batch Normalization and weight decay, optimized with a position-aware Huber loss.
+          Formula Forecast predicts F1 finishing order with neural-network ensembles trained on
+          FastF1 data from 2018&ndash;2025 and tested on the 2026 season, which the models never see
+          in training. After qualifying, a 5-model ensemble predicts how far each driver will
+          finish from their grid slot (15 features covering form, car and track history, and
+          racecraft). Before qualifying, a second ensemble works from season form instead.
+        </p>
+        <p>
+          <strong>How it compares to the obvious baseline:</strong> on 2026 races, its predicted
+          order is about as accurate as simply using qualifying order, and slightly better at
+          exact positions (38% vs 36%, excluding DNFs).
         </p>
         <h3>Predictions</h3>
         <p>
@@ -69,7 +76,7 @@ function App() {
       </main>
 
       <footer className="App-footer">
-        <p>Powered by deep neural networks trained on FastF1 data (2020-2024)</p>
+        <p>Neural-network ensembles trained on FastF1 data (2018&ndash;2025) &middot; tested on 2026</p>
         <p>Created by Nihal Ernest</p>
       </footer>
     </div>

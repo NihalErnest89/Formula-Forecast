@@ -15,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 def load_data():
     training_data = pd.read_csv(DATA_DIR / 'training_data.csv')
     test_data = pd.read_csv(DATA_DIR / 'test_data.csv')
-    return training_data, test_data
+    return pd.concat([training_data, test_data], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -56,25 +56,17 @@ def make_X(df, medians, scaler):
     return scaler.transform(X)
 
 
-def prepare_features(train_data, val_data, test_data):
-    medians = train_data[FEATURE_COLS].median()
+def fit_preprocessing(train_df):
+    medians = train_df[FEATURE_COLS].median()
+    scaler = StandardScaler().fit(train_df[FEATURE_COLS].fillna(medians).values)
+    return medians, scaler
 
-    scaler = StandardScaler()
-    scaler.fit(train_data[FEATURE_COLS].fillna(medians).values)
-
-    return {
-        'medians': medians,
-        'scaler': scaler,
-        'X_train': make_X(train_data, medians, scaler),
-        'y_train': train_data['ActualPosition'].values,
-        'X_val': make_X(val_data, medians, scaler),
-        'y_val': val_data['ActualPosition'].values,
-        'X_test': make_X(test_data, medians, scaler),
-        'y_test': test_data['ActualPosition'].values,
-    }
-
+def split_years(df, years):
+    return df[df['Year'].isin(years)].copy()
 
 def split_train_val(df, val_year):
-    train_data = df[df['Year'] != val_year].copy()
     val_data = df[df['Year'] == val_year].copy()
+    if val_data.empty:
+        raise ValueError(f'no rows for val_year={val_year}; data has {sorted(df.Year.unique())}')
+    train_data = df[df['Year'] != val_year].copy()
     return train_data, val_data

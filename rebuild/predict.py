@@ -1,24 +1,12 @@
 # practice for my own knowledge of the process we followed
 
 import sys
-import json
-import pickle
-from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.preprocessing import StandardScaler
-from config import *
-from data import filter_races, load_data, make_X, prepare_features, split_train_val
-from model import build_model, evaluate, load_artifacts, save_artifacts, train_model
-
-DATA_DIR = Path(__file__).parent.parent / 'data'
-OUT = Path(__file__).parent / 'saved'
-
+from config import OUT, TEST_YEARS
+from data import filter_races, load_data, make_X, split_years
+from model import evaluate, load_artifacts
+from train import main as train_main
 
 
 
@@ -95,56 +83,32 @@ def ask_race(test_data):
 # ---------------------------------------------------------------------------
 
 def main():
-    force_train = '--train' in sys.argv
-    have_saved = (OUT / 'model.pth').exists()
+    saved = (OUT / 'model.pth').exists()
+    if not saved:
+        print('no saved model -- run python train.py first')
+        train_main()
+    elif '--train' in sys.argv or ask_yes_no('saved model found. retrain it?'):
+        train_main()
+
+    model, scaler, medians = load_artifacts()
 
     print('loading data...')
-    training_data, test_data = load_data()
-    training_data = filter_races(training_data)
-    test_data = filter_races(test_data)
-    print(f'  {len(training_data)} training rows, {len(test_data)} test rows')
+    df = filter_races(load_data())
+    test_df = split_years(df, TEST_YEARS)
+    print(f'  {len(test_df)} test rows ({TEST_YEARS})')
 
-    # decide whether to train: no saved model leaves no choice, --train forces
-    # it, otherwise ask.
-    if not have_saved:
-        print('\nno saved model found, training a new one')
-        retrain = True
-    elif force_train:
-        print('\n--train given, retraining')
-        retrain = True
-    else:
-        retrain = ask_yes_no('\nsaved model found. retrain it?')
+    print(f'\nevaluating on {TEST_YEARS}...')
+    evaluate(model, test_df, make_X(test_df, medians, scaler))
 
-    if retrain:
-        train_data, val_data = split_train_val(training_data, VAL_YEAR)
-        prep = prepare_features(train_data, val_data, test_data)
-
-        print(f'\ntraining on {len(prep["X_train"])} rows, validating on {len(prep["X_val"])} ({VAL_YEAR})')
-        model = build_model(len(FEATURE_COLS), HIDDEN)
-        model, _ = train_model(model, prep['X_train'], prep['y_train'],
-                               prep['X_val'], prep['y_val'])
-
-        print('\nsaving...')
-        save_artifacts(model, prep['scaler'], prep['medians'])
-        scaler, medians = prep['scaler'], prep['medians']
-    else:
-        print('\nusing the saved model (pass --train to retrain)')
-        model, scaler, medians = load_artifacts()
-
-    # evaluate -- note X_test is rebuilt here from the scaler/medians we ended
-    # up with, whether those came from training or from disk. same path either way.
-    print('\nevaluating on 2025-2026...')
-    evaluate(model, test_data, make_X(test_data, medians, scaler))
-
-    # predict races until told to stop
     while True:
-        race, year, rnd = ask_race(test_data)
+        race, year, rnd = ask_race(test_df)
         print(f'\npredicting {year} round {rnd}...')
         result = predict_race(model, scaler, medians, race)
-        print(result[['DriverName', 'ActualGridPosition', 'pred', 'pred_rank', 'ActualPosition']].to_string(index=False))
+        print(result[['DriverName', 'GridPosition', 'pred', 'pred_rank', 'ActualPosition']].to_string(index=False))
 
         if not ask_yes_no('\npredict another race?'):
             break
+
 
 
 if __name__ == '__main__':

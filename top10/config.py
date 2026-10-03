@@ -48,10 +48,11 @@ FEATURE_COLS_PREQUALI = FEATURE_COLS + [
 PREQUALI_ENSEMBLE_SEEDS = [42, 43, 44, 45, 46]
 
 # Training years: years to use for training data (exclude years in TEST_YEARS)
-TRAINING_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024]
+TRAINING_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
 
 # Test years: years to use for test data (predict will offer races from these years)
-TEST_YEARS = [2025, 2026]
+# Must match test_years in collect_data.py main().
+TEST_YEARS = [2026]
 
 # Backward compat: if train.py only supported single TEST_YEAR, it uses TEST_YEARS[0] when applicable
 TEST_YEAR = None  # Unused when TEST_YEARS is set; kept for reference

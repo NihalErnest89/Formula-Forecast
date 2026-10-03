@@ -13,16 +13,17 @@ FEATURE_COLS = [
     'HistoricalTrackAvgPosition',
     'ConstructorStanding',
     'ConstructorTrackAvg',
-    'ActualGridPosition',
+    'GridPosition',
     'RecentForm',
     'CareerWins',
     'WinsLast3Years',
     'TrackType',
 ]
 
-VAL_YEAR = 2024
+TRAIN_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+TEST_YEARS =[2026]
 HIDDEN = [64, 32]
 BATCH_SIZE = 32
 LR = 0.001
-MAX_EPOCHS = 200
-MAX_PATIENCE = 20
+MAX_EPOCHS = 60
+CV_SEEDS = [0, 1, 2]

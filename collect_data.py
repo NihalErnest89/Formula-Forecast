@@ -1336,10 +1336,10 @@ def main():
     force_refresh = '--refresh' in sys.argv
     force_reorganize = '--reorganize' in sys.argv
 
-    # Training data from 2020 onwards (expanded dataset for better generalization)
-    training_years = [2018, 2019, 2020, 2021, 2022, 2023, 2024]
-    # Test years (both appear in predict race selector)
-    test_years = [2025, 2026]
+    # Training data: every completed season up to the last one
+    training_years = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+    # Test years (these are the ones that appear in the predict race selector)
+    test_years = [2026]
 
     print("F1 Data Collection")
     print("=" * 50)
