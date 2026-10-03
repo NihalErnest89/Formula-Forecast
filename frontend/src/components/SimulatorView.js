@@ -18,7 +18,7 @@ function pickDefaultRace(races) {
 }
 
 function SimulatorView({ races, uniqueYears }) {
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedYear, setSelectedYear] = useState(null); // set from the default race once races load
   const [selectedRace, setSelectedRace] = useState(null);
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(false);

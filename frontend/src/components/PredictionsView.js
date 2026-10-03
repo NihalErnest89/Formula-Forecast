@@ -1,10 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getTeamColorForDriver, getDriverImage } from '../driverData';
 import { DATA_BASE } from '../hooks/useRaces';
 import RaceSelector from './RaceSelector';
 
 function PredictionsView({ races, uniqueYears }) {
-  const [selectedYear, setSelectedYear] = useState(2025);
+  // undefined = not chosen yet; null = the user picked "All".
+  // Default to the most recent season once the race list has loaded.
+  const [selectedYear, setSelectedYear] = useState(undefined);
+  useEffect(() => {
+    if (selectedYear === undefined && uniqueYears.length > 0) {
+      setSelectedYear(uniqueYears[0]);
+    }
+  }, [selectedYear, uniqueYears]);
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(false);
