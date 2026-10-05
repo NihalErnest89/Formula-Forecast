@@ -1,6 +1,30 @@
+import json
+
 import numpy as np
 import pandas as pd
 from pathlib import Path
+
+_PRE2018_WINS_PATH = Path(__file__).parent.parent / 'data' / 'pre2018_wins.json'
+_pre2018_wins_cache = None
+
+
+def _pre2018_wins(driver_key, year):
+    """Wins BEFORE 2018 for a driver, which the results data (2018 on) cannot see.
+
+    Returns (career_wins_before_2018, wins_before_2018_inside_the_3_year_window_of_`year`).
+    Same table and logic as collect_data._pre2018_wins (duplicated because importing
+    collect_data has side effects); built once by fetch_pre2018_wins.py."""
+    global _pre2018_wins_cache
+    if _pre2018_wins_cache is None:
+        if _PRE2018_WINS_PATH.exists():
+            _pre2018_wins_cache = json.loads(_PRE2018_WINS_PATH.read_text(encoding='utf-8'))
+        else:
+            print(f"  WARNING: {_PRE2018_WINS_PATH} missing -- run: python fetch_pre2018_wins.py")
+            _pre2018_wins_cache = {}
+    d = _pre2018_wins_cache.get(str(driver_key))
+    if not d:
+        return 0, 0
+    return d['total'], sum(n for y, n in d['by_year'].items() if int(y) >= year - 2)
 
 
 def _canon_num(x):
@@ -569,6 +593,10 @@ def _calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, s
             prior_3y = prior_all[prior_all['Year'] >= recent_start]
             wins_last_3_years = _count_wins(prior_3y, driver_num)
         
+        base_career, base_last3 = _pre2018_wins(driver_num, selected_year)
+        career_wins += base_career
+        wins_last_3_years += base_last3
+
         # Calculate TrackType (street circuit = 1, permanent = 0)
         street_circuits = [
             'Monaco', 'Singapore', 'Azerbaijan', 'Miami', 'Las Vegas',

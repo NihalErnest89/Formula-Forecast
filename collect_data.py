@@ -693,6 +693,31 @@ def _pitlane_to_back_of_grid(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_PRE2018_WINS_PATH = Path(__file__).parent / 'data' / 'pre2018_wins.json'
+_pre2018_wins_cache = None
+
+
+def _pre2018_wins(driver_key, year):
+    """Wins BEFORE 2018 for a driver, which the results data (2018 on) cannot see.
+
+    Returns (career_wins_before_2018, wins_before_2018_that_fall_inside_the_3_year_window_of_`year`).
+    The window part only matters for 2018 (covers 2016-17) and 2019 (covers 2017).
+    Table built once by fetch_pre2018_wins.py; keyed by the same abbreviation as the features."""
+    global _pre2018_wins_cache
+    if _pre2018_wins_cache is None:
+        if _PRE2018_WINS_PATH.exists():
+            _pre2018_wins_cache = json.loads(_PRE2018_WINS_PATH.read_text(encoding='utf-8'))
+        else:
+            print(f"  WARNING: {_PRE2018_WINS_PATH} missing -- CareerWins will undercount "
+                  "anyone who won before 2018. Run: python fetch_pre2018_wins.py")
+            _pre2018_wins_cache = {}
+    d = _pre2018_wins_cache.get(str(driver_key))
+    if not d:
+        return 0, 0
+    last3 = sum(n for y, n in d['by_year'].items() if int(y) >= year - 2)
+    return d['total'], last3
+
+
 def _key_drivers_by_identity(df: pd.DataFrame) -> pd.DataFrame:
     """A driver number is not a driver. Champions swap to #1 and back, drivers
     move numbers (Verstappen 33 -> 1 -> 3, Norris 4 -> 1), and numbers get
@@ -975,6 +1000,10 @@ def organize_data(training_years: List[int], test_years: List[int],
             else:
                 wins_last_3_years = 0
             
+            base_career, base_last3 = _pre2018_wins(driver_num, year)
+            career_wins += base_career
+            wins_last_3_years += base_last3
+
             # 3. TrackType: 1 for street circuit, 0 for permanent
             track_type = is_street_circuit(track_name)
             
@@ -1296,6 +1325,9 @@ def organize_data(training_years: List[int], test_years: List[int],
                 wins_last_3_years = (driver_prior_3y[pos_col] == 1).sum()
             else:
                 wins_last_3_years = 0
+            base_career, base_last3 = _pre2018_wins(driver_num, current_year)
+            career_wins += base_career
+            wins_last_3_years += base_last3
             
             # Get DNF status if available
             status = race.get('Status', '')
