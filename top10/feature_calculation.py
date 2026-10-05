@@ -38,18 +38,18 @@ def add_racecraft_features(dfs, driver_window=20, team_window=40):
     for key in sorted(allr['_key'].unique()):
         race_rows = allr[allr['_key'] == key]
         for _, row in race_rows.iterrows():
-            dn, tm = _canon_num(row['DriverNumber']), str(row['TeamName'])
+            dn, tm = _canon_num(row['DriverName']), str(row['TeamName'])
             dh, ch = hist_d.get(dn, []), hist_c.get(tm, [])
             d_feat[(key, dn)] = float(np.mean(dh[-driver_window:])) if dh else 0.0
             c_feat[(key, tm)] = float(np.mean(ch[-team_window:])) if ch else 0.0
         for _, row in race_rows.iterrows():  # update AFTER computing (no leakage)
-            hist_d.setdefault(_canon_num(row['DriverNumber']), []).append(row['_gain'])
+            hist_d.setdefault(_canon_num(row['DriverName']), []).append(row['_gain'])
             hist_c.setdefault(str(row['TeamName']), []).append(row['_gain'])
 
     for df in dfs:
         keys = df['Year'] * 100 + df['RoundNumber']
         df['DriverAvgGain'] = [d_feat.get((k, _canon_num(d)), 0.0)
-                               for k, d in zip(keys, df['DriverNumber'])]
+                               for k, d in zip(keys, df['DriverName'])]
         df['ConstructorAvgGain'] = [c_feat.get((k, str(t)), 0.0)
                                     for k, t in zip(keys, df['TeamName'])]
 
@@ -73,7 +73,7 @@ def add_elo_features(dfs, k=24, start=1500.0):
     """
     allr = pd.concat(dfs, ignore_index=True)
     allr['_key'] = allr['Year'] * 1000 + allr['RoundNumber']
-    allr['_dn'] = allr['DriverNumber'].apply(_canon_num)
+    allr['_dn'] = allr['DriverName'].apply(_canon_num)
     elo_d, elo_c = {}, {}
     feat_d, feat_c = {}, {}
     for key in sorted(allr['_key'].unique()):
@@ -104,7 +104,7 @@ def add_elo_features(dfs, k=24, start=1500.0):
                     elo_c[tn[j]] = rb - kk * (1 - ea)
     for df in dfs:
         keys = df['Year'] * 1000 + df['RoundNumber']
-        dns = df['DriverNumber'].apply(_canon_num)
+        dns = df['DriverName'].apply(_canon_num)
         df['DriverElo'] = [feat_d.get((k_, d), start) for k_, d in zip(keys, dns)]
         df['ConstructorElo'] = [feat_c.get((k_, str(t)), start)
                                 for k_, t in zip(keys, df['TeamName'])]
@@ -145,7 +145,38 @@ def add_overqual_features(df):
     return df
 
 
+def _key_by_identity(df):
+    """A driver number is not a driver: champions swap to #1 and back, drivers
+    change numbers (Verstappen 33 -> 1 -> 3, Norris 4 -> 1) and numbers get
+    reused (Ricciardo's #3 -> Verstappen, Vettel's #5 -> Bortoleto). The feature
+    code below looks drivers up by DriverNumber, so a new holder of a number
+    inherited the previous holder's wins/form/track record. Key on the driver's
+    abbreviation instead (the real number is kept in _RealNumber)."""
+    if df is None or df.empty or 'DriverName' not in df.columns:
+        return df
+    df = df.copy()
+    df['_RealNumber'] = df['DriverNumber']
+    df['DriverNumber'] = df['DriverName'].astype(str)
+    return df
+
+
 def calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int,
+                                    track_name: str, training_df: pd.DataFrame = None):
+    """Features for a race that has not happened yet (see the impl below).
+
+    Runs the calculation with every driver keyed by identity, then puts each
+    driver's CURRENT real number back so the output (and the site) still shows it."""
+    frames = [f for f in (training_df, test_df) if f is not None and not f.empty]
+    latest = pd.concat(frames, ignore_index=True).sort_values(['Year', 'RoundNumber'])
+    real_number = latest.drop_duplicates('DriverName', keep='last').set_index('DriverName')['DriverNumber']
+
+    out = _calculate_future_race_features(_key_by_identity(test_df), selected_year, selected_round,
+                                          track_name, _key_by_identity(training_df))
+    out['DriverNumber'] = out['DriverName'].map(real_number).fillna(out['DriverNumber'])
+    return out
+
+
+def _calculate_future_race_features(test_df: pd.DataFrame, selected_year: int, selected_round: int,
                                     track_name: str, training_df: pd.DataFrame = None):
     """
     Calculate features for a future race using data from all completed races up to this point.

@@ -50,6 +50,10 @@ def try_fetch_quali_grid(year, event_name):
         import pandas as pd
         fastf1.Cache.enable_cache(str(CACHE_DIR))
         session = fastf1.get_session(year, event_name, 'Q')
+        # get_session fuzzy-matches by name. If FastF1's calendar is degraded and lacks
+        # this race it silently returns a DIFFERENT one (Singapore -> Hungary's quali).
+        if str(session.event['EventName']) != event_name:
+            return None
         session.load(laps=False, telemetry=False, weather=False, messages=False)
         results = session.results
         if results is None or results.empty or results['Position'].isna().all():
@@ -84,10 +88,10 @@ def generate_race_prediction(race, test_df, training_df, model, scaler, model_ty
 
     def attach_latest(df):
         """Attach current racecraft + Elo features (as of latest completed race)."""
-        df['DriverAvgGain'] = df['DriverNumber'].map(
-            lambda d: (latest_driver_gain or {}).get(_canon_driver(d), 0.0))
-        df['DriverElo'] = df['DriverNumber'].map(
-            lambda d: (latest_driver_elo or {}).get(_canon_driver(d), 1500.0))
+        df['DriverAvgGain'] = df['DriverName'].map(
+            lambda d: (latest_driver_gain or {}).get(str(d), 0.0))
+        df['DriverElo'] = df['DriverName'].map(
+            lambda d: (latest_driver_elo or {}).get(str(d), 1500.0))
         if 'TeamName' in df.columns:
             df['ConstructorAvgGain'] = df['TeamName'].map(
                 lambda t: (latest_team_gain or {}).get(str(t), 0.0))

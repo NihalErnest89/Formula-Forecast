@@ -765,7 +765,10 @@ def build_delta_races(df, feats, medians):
 
 def ranked_eval_delta(model, races, scaler):
     """Evaluate a delta model (or ensemble list of models - deltas averaged)
-    with per-race ranking, matching how the site displays predictions.
+    with per-race ranking over the races from build_delta_races.
+    NOTE: those races hold only drivers who ACTUALLY finished in the top 10, so
+    this uses the result to choose who gets scored and flatters the model. Fine
+    for early stopping; for numbers that match the site use site_eval_delta.
     Returns dict of MAE/exact/W1/W3/winner%."""
     models = model if isinstance(model, list) else [model]
     errs, winner_hits = [], 0
@@ -783,6 +786,45 @@ def ranked_eval_delta(model, races, scaler):
     return {'mae': float(e.mean()), 'exact': float((e == 0).mean() * 100),
             'w1': float((e <= 1).mean() * 100), 'w3': float((e <= 3).mean() * 100),
             'winner': float(winner_hits / max(len(races), 1) * 100)}
+
+
+def site_eval_delta(models, df, feats, medians, scaler):
+    """Score held-out races exactly the way the site shows them: rank EVERY
+    driver in the race by grid_rank + mean ensemble delta, take the top 10,
+    drop DNFs and drivers who finished more than 6 places behind their grid
+    slot (the site's filtered view), then compare the model's order, the
+    actual order and plain qualifying order among the drivers that remain.
+
+    df must hold every driver of each race, with GridPosition = actual grid.
+    Returns {'model': {...}, 'quali': {...}} with mae/exact/w1/w2/w3."""
+    for m in models:
+        m.eval()
+    em, eq = [], []
+    with torch.no_grad():
+        for _, g in df.groupby(['Year', 'RoundNumber']):
+            X = g[feats].copy()
+            for c in feats:
+                X[c] = X[c].fillna(medians[c])
+            Xs = torch.FloatTensor(scaler.transform(X.values.astype(np.float32)))
+            delta = np.mean([m(Xs).numpy() for m in models], axis=0)
+            base = g['GridPosition'].rank(method='first').values
+            top = g.iloc[np.argsort(base + delta, kind='stable')[:10]].copy()
+            top['_pred'] = np.arange(len(top))
+            keep = top[~top['IsDNF'].fillna(False).astype(bool)
+                       & top['ActualPosition'].notna()
+                       & ((top['ActualPosition'] - top['GridPosition']) <= 6)]
+            if len(keep) < 2:
+                continue
+            actual = keep['ActualPosition'].rank(method='first')
+            em.extend((keep['_pred'].rank(method='first') - actual).abs().tolist())
+            eq.extend((keep['GridPosition'].rank(method='first') - actual).abs().tolist())
+
+    def stats(e):
+        e = np.array(e)
+        return {'mae': float(e.mean()), 'exact': float((e == 0).mean() * 100),
+                'w1': float((e <= 1).mean() * 100), 'w2': float((e <= 2).mean() * 100),
+                'w3': float((e <= 3).mean() * 100), 'n': int(len(e))}
+    return {'model': stats(em), 'quali': stats(eq)}
 
 
 def train_postquali_delta(races_tr, races_va, input_size, scaler, seed=42,
@@ -1456,6 +1498,7 @@ def main():
         print(f"  Trained ensemble member seed={seed}")
 
     pq_test_metrics = None
+    pq_site_metrics = None
     if races_te:
         pq_test_metrics = ranked_eval_delta(pq_models, races_te, scaler_pq)
         # Naive quali-order baseline on the identical protocol - the bar to beat
@@ -1464,12 +1507,22 @@ def main():
             naive_errs.extend(np.abs(r['base'] - r['fin']).tolist())
             naive_win += int(r['fin'][np.argmin(r['base'])] == 1)
         ne = np.array(naive_errs)
-        print(f"\nPost-Quali Delta Model - Ranked Test Metrics (vs naive quali order):")
+        print(f"\nPost-Quali Delta Model - Ranked Test Metrics (vs naive quali order)")
+        print(f"  [scored on drivers who ACTUALLY finished top 10 - optimistic, not the site number]")
         print(f"  MAE:    {pq_test_metrics['mae']:.3f} vs {ne.mean():.3f} naive")
         print(f"  Exact:  {pq_test_metrics['exact']:.1f}% vs {(ne == 0).mean() * 100:.1f}% naive")
         print(f"  W1:     {pq_test_metrics['w1']:.1f}% vs {(ne <= 1).mean() * 100:.1f}% naive")
         print(f"  W3:     {pq_test_metrics['w3']:.1f}% vs {(ne <= 3).mean() * 100:.1f}% naive")
         print(f"  Winner: {pq_test_metrics['winner']:.0f}% vs {naive_win / len(races_te) * 100:.0f}% naive")
+
+        pq_site_metrics = site_eval_delta(pq_models, pq_test_df, pq_feats, pq_medians, scaler_pq)
+        sm, sq = pq_site_metrics['model'], pq_site_metrics['quali']
+        print(f"\nPost-Quali - SITE test metrics (predicted top 10 vs actual, excl. DNFs/drops >6):")
+        print(f"  MAE:    {sm['mae']:.3f} vs {sq['mae']:.3f} quali order")
+        print(f"  Exact:  {sm['exact']:.1f}% vs {sq['exact']:.1f}%")
+        print(f"  W1:     {sm['w1']:.1f}% vs {sq['w1']:.1f}%")
+        print(f"  W2:     {sm['w2']:.1f}% vs {sq['w2']:.1f}%")
+        print(f"  W3:     {sm['w3']:.1f}% vs {sq['w3']:.1f}%   (n={sm['n']} driver-races)")
 
     models_dir = Path(__file__).parent.parent / 'models'
     ensemble_files = []
@@ -1623,6 +1676,7 @@ def main():
             'within_3': float(test_w3_all) if 'test_w3_all' in locals() and test_w3_all else None,
         },
         'test_postquali': pq_test_metrics,
+        'test_postquali_site': pq_site_metrics,
         'test_prequali_delta': pre_test_metrics,
         'feature_importances': {k: float(v) for k, v in feature_importances.items()},
         'model_architecture': {

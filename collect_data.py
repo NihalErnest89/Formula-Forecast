@@ -680,6 +680,38 @@ def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_y
         return np.nan
 
 
+def _pitlane_to_back_of_grid(df: pd.DataFrame) -> pd.DataFrame:
+    """FastF1 reports a pit-lane start as grid position 0. Everything downstream
+    ranks or averages grid slots, so 0 would read as "ahead of pole" (and drag a
+    driver's season-average grid toward the front). Treat it as the back of
+    that race's grid instead."""
+    if df.empty or 'GridPosition' not in df.columns:
+        return df
+    df = df.copy()
+    field_size = df.groupby(['Year', 'RoundNumber'])['DriverNumber'].transform('count')
+    df['GridPosition'] = df['GridPosition'].where(df['GridPosition'] != 0, field_size)
+    return df
+
+
+def _key_drivers_by_identity(df: pd.DataFrame) -> pd.DataFrame:
+    """A driver number is not a driver. Champions swap to #1 and back, drivers
+    move numbers (Verstappen 33 -> 1 -> 3, Norris 4 -> 1), and numbers get
+    reused (Ricciardo's #3 became Verstappen's, Vettel's #5 became Bortoleto's).
+    Every cross-season lookup below filters on DriverNumber, so a driver's
+    wins/form/track history was split at each change and a number's new holder
+    inherited the previous holder's record.
+
+    While features are built, key every lookup on the driver's abbreviation
+    instead. The real number is kept in _RealNumber and written back to the
+    output tables, so downstream code still sees the number it always did."""
+    if df.empty or 'Abbreviation' not in df.columns:
+        return df
+    df = df.copy()
+    df['_RealNumber'] = df['DriverNumber']
+    df['DriverNumber'] = df['Abbreviation'].fillna(df['DriverNumber'].astype(str))
+    return df
+
+
 def organize_data(training_years: List[int], test_years: List[int],
                   force_refresh: bool = False,
                   force_reorganize: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -699,6 +731,7 @@ def organize_data(training_years: List[int], test_years: List[int],
         (the expensive feature organization step is skipped).
     """
     total_new_races = 0
+    new_training_races = 0
 
     print("Collecting training data...")
     training_races = []
@@ -709,6 +742,7 @@ def organize_data(training_years: List[int], test_years: List[int],
         print(f"  Loading season {year}...")
         season_data, n_new = get_season_data(year, force_refresh=force_refresh)
         total_new_races += n_new
+        new_training_races += n_new
         if not season_data.empty:
             training_races.append(season_data)
             successful_years.append(year)
@@ -740,6 +774,12 @@ def organize_data(training_years: List[int], test_years: List[int],
             test_races_list.append(season_df)
     test_data = pd.concat(test_races_list, ignore_index=True) if test_races_list else pd.DataFrame()
 
+    # Done here (not at fetch time) so cached season snapshots get it too.
+    all_training_data = _pitlane_to_back_of_grid(all_training_data)
+    test_data = _pitlane_to_back_of_grid(test_data)
+    all_training_data = _key_drivers_by_identity(all_training_data)
+    test_data = _key_drivers_by_identity(test_data)
+
     # Skip the expensive feature-organization pass when nothing new was fetched
     # and the feature CSVs already exist (they can only depend on the snapshots)
     output_csvs_exist = (Path('data') / 'training_data.csv').exists() and (Path('data') / 'test_data.csv').exists()
@@ -748,15 +788,25 @@ def organize_data(training_years: List[int], test_years: List[int],
         print("(Use 'python collect_data.py --reorganize' to force a rebuild after feature-code changes.)")
         return None, None
 
+    # A training-season row's features depend only on training-season races. If
+    # none of those changed, the existing training CSV is still exactly right,
+    # so reuse it and rebuild only the test seasons. Mid-season every new race
+    # is a test-season race, and the ~3,400 training rows are most of the work.
+    # (The test loop below reads only the raw results, never anything the
+    # training loop builds, so skipping the training loop is safe.)
+    reuse_training = (new_training_races == 0 and output_csvs_exist
+                      and not force_reorganize and not force_refresh)
+
     # Organize features and labels
     print(f"Organizing features and labels ({total_new_races} new races)...")
-    
-    # Dictionary to track historical sector times per (track, driver) for accumulation
+    if reuse_training:
+        print("  Training seasons unchanged - reusing data/training_data.csv, rebuilding test seasons only")
+
     training_features = []
     test_features = []
-    
+
     # Process training data
-    for year in training_years:
+    for year in ([] if reuse_training else training_years):
         year_data = all_training_data[all_training_data['Year'] == year].copy()
         if year_data.empty:
             continue
@@ -1016,7 +1066,7 @@ def organize_data(training_years: List[int], test_years: List[int],
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
                 'TrackType': track_type,  # 1 = street circuit, 0 = permanent
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
-                'DriverNumber': race['DriverNumber'],
+                'DriverNumber': race.get('_RealNumber', race['DriverNumber']),
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
@@ -1277,7 +1327,7 @@ def organize_data(training_years: List[int], test_years: List[int],
                 'PointsGapToLeader': points_gap,  # Points gap to championship leader
                 'TrackType': track_type,  # 1 = street circuit, 0 = permanent
                 'FormTrend': form_trend,  # Momentum direction (positive = improving)
-                'DriverNumber': race['DriverNumber'],
+                'DriverNumber': race.get('_RealNumber', race['DriverNumber']),
                 'DriverName': race.get('Abbreviation', 'UNK'),
                 'TeamName': race.get('TeamName', race.get('Team', '')),  # Constructor/team name
                 'ActualPosition': race.get('Position', np.nan),
@@ -1289,9 +1339,12 @@ def organize_data(training_years: List[int], test_years: List[int],
             }
             test_features.append(features)
     
-    training_df = pd.DataFrame(training_features)
+    if reuse_training:
+        training_df = pd.read_csv(Path('data') / 'training_data.csv')
+    else:
+        training_df = pd.DataFrame(training_features)
     test_df = pd.DataFrame(test_features)
-    
+
     return training_df, test_df
 
 

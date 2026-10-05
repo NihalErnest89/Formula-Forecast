@@ -3,6 +3,7 @@ Shared utilities for data loading, race list building, and prediction formatting
 Used by both api/app.py and generate_static_data.py to avoid duplicated logic.
 """
 
+import json
 import pandas as pd
 from pathlib import Path
 
@@ -40,6 +41,36 @@ def load_f1_data(data_dir):
     return test_df, training_df
 
 
+_SCHEDULE_DIR = Path(__file__).parent.parent / 'data'
+
+
+def _calendar_for(year, completed):
+    """Season calendar as a DataFrame[Year, EventName, RoundNumber].
+
+    FastF1's main schedule source is sometimes unavailable (HTTP 403); it then
+    quietly falls back to another source whose calendar can be shorter and
+    numbered differently (it listed Miami as round 6 when the results have it as
+    round 4), and the site lost its upcoming races. So a fetched calendar is only
+    trusted if it agrees with the races that have actually been run; otherwise
+    use the last good one saved in data/schedule_<year>.json. A trusted fetch
+    refreshes that file."""
+    path = _SCHEDULE_DIR / f'schedule_{year}.json'
+    fetched = get_future_races(year)
+    if not fetched.empty:
+        fetched = fetched[['Year', 'EventName', 'RoundNumber']].drop_duplicates()
+        fetched = fetched.assign(RoundNumber=fetched['RoundNumber'].astype(int))
+        done = set(zip(completed['EventName'], completed['RoundNumber'].astype(int)))
+        if done <= set(zip(fetched['EventName'], fetched['RoundNumber'])):
+            path.write_text(json.dumps(fetched.to_dict('records'), ensure_ascii=False, indent=1),
+                            encoding='utf-8')
+            return fetched
+    if path.exists():
+        print(f'  note: FastF1 calendar for {year} missing or disagrees with the races already run '
+              f'-- using the saved calendar ({path.name})')
+        return pd.DataFrame(json.loads(path.read_text(encoding='utf-8')))
+    return fetched
+
+
 def build_race_list(test_df):
     """Build the combined completed + future race list from test data.
 
@@ -51,7 +82,7 @@ def build_race_list(test_df):
 
     for year in unique_years:
         try:
-            future_races = get_future_races(year)
+            future_races = _calendar_for(year, completed_races[completed_races['Year'] == year])
             if not future_races.empty:
                 future_races_clean = future_races[['Year', 'EventName', 'RoundNumber']].drop_duplicates()
                 future_only = future_races_clean[
