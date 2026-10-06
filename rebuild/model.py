@@ -1,9 +1,10 @@
 import json
 import pickle
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from config import FEATURE_COLS, HIDDEN, OUT
+from config import DEVICE, FEATURE_COLS, HIDDEN, OUT
 
 # ---------------------------------------------------------------------------
 # 6. the model
@@ -38,13 +39,33 @@ def build_model(input_size, hidden):
 def ranked_top10_mae(model, df, X):
     model.eval()
     with torch.no_grad():
-        p = model(torch.FloatTensor(X)).squeeze().numpy()
+        p = model(torch.FloatTensor(X).to(DEVICE)).squeeze().cpu().numpy()
 
     d = df.copy()
     d['p'] = p
     d['r'] = d.groupby(['Year', 'RoundNumber'])['p'].rank(method='first')
     top = d[d['ActualPosition'] <= 10]
     return (top['r'] - top['ActualPosition']).abs().mean()
+
+
+def permutation_importance(model, df, X, repeats=5):
+    """How much worse the held-out error gets when one feature is scrambled.
+
+    Shuffle a single column (breaking its link to each driver while leaving the
+    others intact), re-measure ranked_top10_mae, and report the rise in error.
+    Big rise = the model leans on that feature; ~0 or negative = it ignores it
+    (or it was adding noise)."""
+    base = ranked_top10_mae(model, df, X)
+    rng = np.random.default_rng(0)
+    importance = []
+    for j in range(X.shape[1]):
+        rises = []
+        for _ in range(repeats):
+            Xp = X.copy()
+            Xp[:, j] = rng.permutation(Xp[:, j])
+            rises.append(ranked_top10_mae(model, df, Xp) - base)
+        importance.append(np.mean(rises))
+    return np.array(importance)
 
 
 def evaluate(model, test_data, X_test):
@@ -55,7 +76,7 @@ def evaluate(model, test_data, X_test):
     df = test_data.copy()
     df['pred'] = preds
     df['pred_rank'] = df.groupby(['Year', 'RoundNumber'])['pred'].rank(method='first')
-    df['grid_rank'] = df.groupby(['Year', 'RoundNumber'])['GridPosition'].rank(method='first')
+    df['grid_rank'] = df.groupby(['Year', 'RoundNumber'])['ActualGridPosition'].rank(method='first')
 
     df['err'] = (df['pred_rank'] - df['ActualPosition']).abs()
     df['gerr'] = (df['grid_rank'] - df['ActualPosition']).abs()
@@ -70,6 +91,15 @@ def evaluate(model, test_data, X_test):
 
     report('full field', df)
     report('true top 10', df[df['ActualPosition'] <= 10])
+
+    model_picks = df[df['pred_rank'] <= 10]['err']
+    grid_picks = df[df['grid_rank'] <= 10]['gerr']
+    print(f'  predicted top 10 (what the site shows)')
+    print(f'    model  MAE {model_picks.mean():.3f}  exact {(model_picks==0).mean()*100:.1f}%  within-1 {(model_picks<=1).mean()*100:.1f}%')
+    print(f'    grid   MAE {grid_picks.mean():.3f}  exact {(grid_picks==0).mean()*100:.1f}%  within-1 {(grid_picks<=1).mean()*100:.1f}%')
+    
+    d = model_picks.mean() - grid_picks.mean()
+    print(f'    -> {"beats" if d < 0 else "LOSES to"} grid by {abs(d):.3f}')
 
     return df
 
@@ -114,7 +144,7 @@ def load_artifacts():
         scaler = pickle.load(f)
 
     model = build_model(len(meta['features']), meta['hidden'])
-    model.load_state_dict(torch.load(OUT / 'model.pth'))
+    model.load_state_dict(torch.load(OUT / 'model.pth', map_location=DEVICE))
     model.eval()
 
     # medians came back as a plain dict -- put it back in the shape fillna wants

@@ -1,18 +1,19 @@
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-from config import TRAIN_YEARS, FEATURE_COLS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS
+from config import DEVICE, MIN_DELTA, PATIENCE, TOP10_WEIGHT, TRAIN_YEARS, FEATURE_COLS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS
 from data import load_data, filter_races, split_years, split_train_val, fit_preprocessing, make_X
-from model import build_model, ranked_top10_mae, save_artifacts
+from model import build_model, permutation_importance, ranked_top10_mae, save_artifacts
 
 # ---------------------------------------------------------------------------
 # 5. dataloader
 # ---------------------------------------------------------------------------
 # float labels (not long) because this is regression: we want 3.7, not class 3.
 
-def make_loader(X, y, shuffle):
-    ds = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
+def make_loader(X, y, w, shuffle):
+    ds = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y), torch.FloatTensor(w))
     return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=shuffle)
 
 
@@ -27,22 +28,51 @@ def make_loader(X, y, shuffle):
 # that's how the final model trains on every season with nothing held back.
 
 def train_model(model, X_train, y_train, epochs, val_df=None, X_val=None):
-    train_loader = make_loader(X_train, y_train, shuffle=True)
-    loss_fn = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    model = model.to(DEVICE)
+    w = np.where(y_train <= 10, TOP10_WEIGHT, 1.0)
+    train_loader = make_loader(X_train, y_train, w, shuffle=True)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+    best_loss = float('inf')
+    stale = 0
 
     curve = []
     for epoch in range(epochs):
         model.train()
-        for xb, yb in train_loader:
+        total_loss = 0
+        for xb, yb, wb in train_loader:
+            xb, yb, wb = xb.to(DEVICE), yb.to(DEVICE), wb.to(DEVICE)
             optimizer.zero_grad()
-            loss = loss_fn(model(xb).squeeze(), yb)
+            loss = (wb * (model(xb).squeeze() - yb) ** 2).mean()
             loss.backward()
             optimizer.step()
+            total_loss += loss.item()
+        train_loss = total_loss / len(train_loader)
+        if train_loss < best_loss - MIN_DELTA:
+            best_loss = train_loss
+            stale = 0
+        else:
+            stale += 1
+
+        line = (f'    Epoch:{epoch + 1:3d} \tlr:{optimizer.param_groups[0]["lr"]:.4f}'
+                f'\t train loss:{train_loss:.3f}')
+
 
         if val_df is not None:
-            curve.append(ranked_top10_mae(model, val_df, X_val))
+            val_mae = ranked_top10_mae(model, val_df, X_val)
+            curve.append(val_mae)
+            line += f'\tval MAE:{val_mae:.3f}'
+        if (epoch + 1) % 10 == 0 or (epoch + 1) == 1:
+            print(line)
+        scheduler.step()
 
+        if stale >= PATIENCE:
+            print(f'    Early stopping at epoch {epoch + 1}')
+            break
+
+    if val_df is not None and curve:
+        curve += [curve[-1]] * (epochs - len(curve))
     return model, curve
 
 
@@ -57,6 +87,7 @@ def train_model(model, X_train, y_train, epochs, val_df=None, X_val=None):
 
 def cross_validate(train_df):
     curves = []
+    importances = []
     for val_year in TRAIN_YEARS:
         fold_train, fold_val = split_train_val(train_df, val_year)
         medians, scaler = fit_preprocessing(fold_train)
@@ -70,10 +101,12 @@ def cross_validate(train_df):
             _, curve = train_model(model, X_tr, fold_train['ActualPosition'].values, MAX_EPOCHS,
                                    val_df=fold_val, X_val=X_va)
             seed_curves.append(curve)
+            if seed == CV_SEEDS[0]:
+                importances.append(permutation_importance(model, fold_val, X_va))
 
         curves.append(np.mean(seed_curves, axis=0))
         print(f'  fold {val_year} done')
-    return np.array(curves)
+    return np.array(curves), np.mean(importances, axis=0)
 
 
 
@@ -89,7 +122,7 @@ def main():
     print()
 
     print(f'cross-validating ({MAX_EPOCHS} epochs per fold)...')
-    curves = cross_validate(train_df)
+    curves, importance = cross_validate(train_df)
     mean_curve = curves.mean(axis=0)
     best_epochs = int(mean_curve.argmin()) + 1
 
@@ -106,6 +139,10 @@ def main():
     for year, mae in zip(TRAIN_YEARS, at_best):
         print(f'  fold {year}:  top-10 MAE {mae:.3f}')
     print(f'CV top-10 MAE: {at_best.mean():.3f} +/- {at_best.std():.3f}   (folds range {at_best.min():.3f} - {at_best.max():.3f})')
+
+    print()
+    print('feature importance (extra top-10 error on held-out seasons when the feature is shuffled):')
+    print(pd.Series(importance, index=FEATURE_COLS).sort_values(ascending=False).round(3).to_string())
 
     print()
     print(f'training final model on all {len(TRAIN_YEARS)} seasons for {best_epochs} epochs...')

@@ -1,27 +1,19 @@
 {
   "features": [
-    "SeasonPoints",
-    "HistoricalTrackAvgPosition",
+    "ActualGridPosition",
+    "PointsShare",
+    "TrackAvgShrunk",
     "ConstructorStanding",
-    "ConstructorTrackAvg",
-    "GridPosition",
-    "RecentForm",
-    "CareerWins",
-    "WinsLast3Years",
-    "TrackType",
-    "SeasonStanding"
+    "RecentFormFin",
+    "TrackType"
   ],
   "medians": {
-    "SeasonPoints": 19.0,
-    "HistoricalTrackAvgPosition": 10.0,
-    "ConstructorStanding": 6.0,
-    "ConstructorTrackAvg": 11.0,
-    "GridPosition": 10.571428571428571,
-    "RecentForm": 11.2,
-    "CareerWins": 0.0,
-    "WinsLast3Years": 0.0,
-    "TrackType": 0.0,
-    "SeasonStanding": 11.0
+    "ActualGridPosition": 10.0,
+    "PointsShare": 0.10606060606060606,
+    "TrackAvgShrunk": 9.06060606060606,
+    "ConstructorStanding": 5.0,
+    "RecentFormFin": 9.5,
+    "TrackType": 0.0
   },
   "hidden": [
     64,

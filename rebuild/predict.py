@@ -1,13 +1,14 @@
 # practice for my own knowledge of the process we followed
 
+import os
 import sys
 
 import torch
-from config import OUT, TEST_YEARS
+from config import DATA_DIR, DEFAULT_YEAR, FEATURE_COLS, OUT, TEST_YEARS
 from data import filter_races, load_data, make_X, split_years
-from model import evaluate, load_artifacts
+from model import evaluate, load_artifacts, permutation_importance, show_weights
 from train import main as train_main
-
+import pandas as pd
 
 
 
@@ -53,9 +54,14 @@ def ask_yes_no(question, default=False):
 def ask_race(test_data):
     """Prompt for year + round, re-asking until it names a race we actually have."""
     available = test_data.groupby('Year')['RoundNumber'].agg(['min', 'max'])
+    schedule = (test_data[['Year', 'RoundNumber', 'EventName']]
+                .drop_duplicates()
+                .sort_values(['Year', 'RoundNumber']))
     print('\navailable races:')
-    for year, row in available.iterrows():
-        print(f'  {year}: rounds {int(row["min"])}-{int(row["max"])}')
+    for year, races in schedule.groupby('Year'):
+        print(f'  {year}:')
+        for _, r in races.iterrows():
+            print(f'    R{int(r["RoundNumber"]):<3} {r["EventName"]}')
 
     if not sys.stdin.isatty():
         year = int(available.index[-1])
@@ -65,24 +71,39 @@ def ask_race(test_data):
 
     while True:
         try:
-            year = int(input('  year: ').strip())
             rnd = int(input('  round: ').strip())
         except ValueError:
             print('  numbers only, try again')
             continue
-
+        
+        year = DEFAULT_YEAR
         race = test_data[(test_data['Year'] == year) & (test_data['RoundNumber'] == rnd)]
         if race.empty:
             print(f'  no race found for {year} round {rnd}')
             continue
         return race, year, rnd
 
+# Update races
+def collect_races():
+    repo_root = DATA_DIR.parent
+    previous_dir = os.getcwd()
+    os.chdir(repo_root)
+    try:
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        import collect_data
+        collect_data.main()
+    except Exception as e:
+        print(f'data update failed ({e}), keeping the data already on disk')
+    finally:
+        os.chdir(previous_dir)
 
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
 def main():
+    cols = ['DriverName', 'pred', 'pred_rank', 'ActualPosition'] + FEATURE_COLS
     saved = (OUT / 'model.pth').exists()
     if not saved:
         print('no saved model -- run python train.py first')
@@ -100,14 +121,28 @@ def main():
     print(f'\nevaluating on {TEST_YEARS}...')
     evaluate(model, test_df, make_X(test_df, medians, scaler))
 
-    while True:
-        race, year, rnd = ask_race(test_df)
-        print(f'\npredicting {year} round {rnd}...')
-        result = predict_race(model, scaler, medians, race)
-        print(result[['DriverName', 'GridPosition', 'pred', 'pred_rank', 'ActualPosition']].to_string(index=False))
+    print("\nRaw weights:")
+    show_weights(model, FEATURE_COLS)
+    importance = permutation_importance(model, test_df, make_X(test_df, medians, scaler))
 
-        if not ask_yes_no('\npredict another race?'):
-            break
+    print("\nImportance Table:")
+    print(pd.Series(importance, index=FEATURE_COLS).sort_values(ascending=False).round(3).to_string())
+
+
+
+    
+    choice = input('1. Predict a race\n2. Update races:\n')
+    if choice == '1':
+        while True:
+            race, year, rnd = ask_race(test_df)
+            print(f"\npredicting {year} round {rnd} ({race['EventName'].iloc[0]})...")
+            result = predict_race(model, scaler, medians, race)
+            print(result[cols].round(2).to_string(index=False))
+    elif choice == '2':
+        collect_races()
+    else:
+        print(f"Invalid choice")
+        
 
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import torch
 
 # ---------------------------------------------------------------------------
 # config
@@ -7,17 +8,17 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent.parent / 'data'
 OUT = Path(__file__).parent / 'saved'
 
+# DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cpu')
+
 
 FEATURE_COLS = [
-    'SeasonPoints',
-    'HistoricalTrackAvgPosition',
+    'ActualGridPosition',
+    'PointsShare',
+    'TrackAvgShrunk',
     'ConstructorStanding',
-    'ConstructorTrackAvg',
-    'GridPosition',
-    'RecentForm',
-    'CareerWins',
-    'WinsLast3Years',
-    'TrackType',
+    'RecentFormFin',
+    'TrackType'
 ]
 
 TRAIN_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
@@ -27,3 +28,10 @@ BATCH_SIZE = 32
 LR = 0.001
 MAX_EPOCHS = 60
 CV_SEEDS = [0, 1, 2]
+
+PATIENCE = 5
+MIN_DELTA = 0.01
+
+DEFAULT_YEAR = 2026
+
+TOP10_WEIGHT = 2.0
