@@ -680,6 +680,25 @@ def calculate_average_grid_position(df: pd.DataFrame, driver_num: str, current_y
         return np.nan
 
 
+def _is_dnf(status, position_text=''):
+    """True when the driver did NOT finish the race (retired, crashed, mechanical
+    failure, disqualified, did not start, withdrew...).
+
+    FastF1's Status is 'Finished', 'Lapped' or '+N Lap(s)' for a driver who saw the
+    flag and a failure description otherwise ('Retired', 'Collision', 'Engine',
+    'Disqualified', ...). The old check looked for the words DNF / DSQ / NC, which
+    those descriptions never contain, so only 22 of ~590 retirements were flagged
+    and the 'finishers only' filtering barely filtered anything."""
+    if pd.notna(status) and str(status).strip():
+        s = str(status).strip().lower()
+        return not (s in ('finished', 'lapped') or s.startswith('+'))
+    if pd.notna(position_text) and str(position_text).strip():
+        # no status text: Ergast-style classified position -- R retired, D disqualified,
+        # E excluded, W withdrew, F failed to qualify, N not classified
+        return str(position_text).strip().upper() in ('R', 'D', 'E', 'W', 'F', 'N')
+    return False
+
+
 def _pitlane_to_back_of_grid(df: pd.DataFrame) -> pd.DataFrame:
     """FastF1 reports a pit-lane start as grid position 0. Everything downstream
     ranks or averages grid slots, so 0 would read as "ahead of pole" (and drag a
@@ -1068,13 +1087,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # Get DNF status if available
             status = race.get('Status', '')
             position_text = race.get('PositionText', '')
-            is_dnf = False
-            if pd.notna(status):
-                status_str = str(status).upper()
-                is_dnf = any(x in status_str for x in ['DNF', 'DSQ', 'DNS', 'NC', 'DISQUALIFIED', 'NOT CLASSIFIED'])
-            elif pd.notna(position_text):
-                pos_text_str = str(position_text).upper()
-                is_dnf = any(x in pos_text_str for x in ['DNF', 'DSQ', 'DNS', 'NC'])
+            is_dnf = _is_dnf(status, position_text)
             
             features = {
                 'Year': year,
@@ -1332,13 +1345,7 @@ def organize_data(training_years: List[int], test_years: List[int],
             # Get DNF status if available
             status = race.get('Status', '')
             position_text = race.get('PositionText', '')
-            is_dnf = False
-            if pd.notna(status):
-                status_str = str(status).upper()
-                is_dnf = any(x in status_str for x in ['DNF', 'DSQ', 'DNS', 'NC', 'DISQUALIFIED', 'NOT CLASSIFIED'])
-            elif pd.notna(position_text):
-                pos_text_str = str(position_text).upper()
-                is_dnf = any(x in pos_text_str for x in ['DNF', 'DSQ', 'DNS', 'NC'])
+            is_dnf = _is_dnf(status, position_text)
             
             features = {
                 'Year': current_year,
