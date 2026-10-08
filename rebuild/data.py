@@ -1,6 +1,8 @@
+import json
+
 import numpy as np
 import pandas as pd
-from config import FEATURE_COLS, DATA_DIR
+from config import DATA_DIR
 from sklearn.preprocessing import StandardScaler
 
 
@@ -13,10 +15,64 @@ from sklearn.preprocessing import StandardScaler
 #   data/training_data.csv  -> 2018-2024, one row per driver per race
 #   data/test_data.csv      -> 2025-2026
 
-def load_data():
+def load_data(next_race=None):
     training_data = pd.read_csv(DATA_DIR / 'training_data.csv')
     test_data = pd.read_csv(DATA_DIR / 'test_data.csv')
-    return add_features(pd.concat([training_data, test_data], ignore_index=True))
+    df = pd.concat([training_data, test_data], ignore_index=True)
+    if next_race is not None:
+        df = pd.concat([df, placeholder_rows(df, *next_race)], ignore_index=True)
+    return add_features(df)
+
+
+# ---------------------------------------------------------------------------
+# 1a. the next race (no results yet)
+# ---------------------------------------------------------------------------
+# collect_data.py only writes races that have happened. to predict the next one,
+# add placeholder rows for it -- same drivers and standings as after the latest
+# race, no result -- BEFORE add_features runs. every feature only looks at
+# earlier races, so add_features fills them in just as it would for a real race.
+# filter_races drops these rows (no result), so training never sees them.
+
+def next_race(year):
+    """(year, round, event) of the first round on the calendar with no results yet, or None."""
+    done = set(pd.read_csv(DATA_DIR / 'test_data.csv').query('Year == @year')['RoundNumber'])
+    schedule = json.loads((DATA_DIR / f'schedule_{year}.json').read_text(encoding='utf-8'))
+    upcoming = sorted((s['RoundNumber'], s['EventName']) for s in schedule
+                      if s['Year'] == year and s['RoundNumber'] not in done)
+    return (year, *upcoming[0]) if upcoming else None
+
+
+def placeholder_rows(df, year, rnd, event):
+    latest = df.loc[df['Year'] == year, 'RoundNumber'].max()
+    rows = df[(df['Year'] == year) & (df['RoundNumber'] == latest)].copy()
+
+    # the latest race's rows hold standings from BEFORE it -- add its points
+    rows['SeasonPoints'] = rows['SeasonPoints'] + rows['Points'].fillna(0)
+    team_points = rows.groupby('TeamName')['SeasonPoints'].sum()
+    rows['ConstructorStanding'] = rows['TeamName'].map(team_points.rank(ascending=False, method='min'))
+
+    rows['RoundNumber'] = rnd
+    rows['EventName'] = event
+    past = df[df['EventName'] == event].sort_values('Year')
+    rows['TrackType'] = past['TrackType'].iloc[-1] if len(past) else 0
+    rows[['ActualPosition', 'ActualGridPosition', 'Points']] = np.nan    # not known yet
+    rows['IsDNF'] = False
+
+    # qualifying done (collect_data.py saved it)? then the real grid is known.
+    # qualifying order stands in for the grid -- penalties are applied later.
+    quali = qualifying_for(year, rnd)
+    if quali:
+        rows['ActualGridPosition'] = rows['DriverName'].map(quali).fillna(len(rows))
+    return rows
+
+
+def qualifying_for(year, rnd):
+    """{driver: qualifying position} that collect_data.py saved for this round, or None."""
+    path = DATA_DIR / f'next_quali_{year}.json'
+    if not path.exists():
+        return None
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    return saved['positions'] if saved['RoundNumber'] == rnd else None
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +147,18 @@ def add_features(df):
     trk_count = count.groupby([df['DriverName'], circuit]).transform(prior).fillna(0)
     overall = drv_total / drv_count.replace(0, np.nan)    # NaN on debut -> median fill later
     df['TrackAvgShrunk'] = (trk_total + SHRINK * overall) / (trk_count + SHRINK)
+
+    # ProjectedGrid: where the driver usually starts, for races BEFORE qualifying.
+    # average real grid over this season's earlier races; at round 1, last
+    # season's average. (collect_data's GridPosition copies the race's own grid
+    # at round 1 -- not known yet before qualifying.)
+    grid = df['ActualGridPosition']
+    this_season = grid.groupby([df['DriverName'], df['Year']]).transform(lambda s: s.expanding().mean().shift(1))
+    per_season = grid.groupby([df['DriverName'], df['Year']]).mean()
+    last_season = pd.Series([per_season.get((d, y - 1), np.nan) for d, y in zip(df['DriverName'], df['Year'])],
+                            index=df.index)
+    df['ProjectedGrid'] = this_season.fillna(last_season)
+
     return df
 
 
@@ -123,17 +191,17 @@ def filter_races(df):
 # anything you FIT (medians, scaler) gets fit on TRAIN only, then applied to
 # val/test. fitting on the eval sets leaks information.
 
-def make_X(df, medians, scaler):
+def make_X(df, medians, scaler, features):
     """Turn a dataframe into a scaled feature matrix using ALREADY-FITTED
     medians and scaler. This is the only path features should ever take --
     training, evaluation, and prediction all go through here."""
-    X = df[FEATURE_COLS].fillna(medians).values
+    X = df[features].fillna(medians).values
     return scaler.transform(X)
 
 
-def fit_preprocessing(train_df):
-    medians = train_df[FEATURE_COLS].median()
-    scaler = StandardScaler().fit(train_df[FEATURE_COLS].fillna(medians).values)
+def fit_preprocessing(train_df, features):
+    medians = train_df[features].median()
+    scaler = StandardScaler().fit(train_df[features].fillna(medians).values)
     return medians, scaler
 
 def split_years(df, years):

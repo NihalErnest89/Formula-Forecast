@@ -1422,6 +1422,61 @@ def save_data(training_df: pd.DataFrame, test_df: pd.DataFrame, output_dir: str 
         json.dump(metadata, f, indent=2)
 
 
+def fetch_qualifying(year: int, rnd: int, event: str):
+    """{driver abbreviation: qualifying position} for one race, or None if qualifying
+    hasn't happened or isn't available.
+
+    FastF1 looks events up by NAME and, when its calendar source is degraded, can
+    silently hand back a different race (asking for Singapore once returned Hungary),
+    so its answer is only used if the event name matches. Jolpica, asked by round
+    number, is the fallback."""
+    try:
+        session = fastf1.get_session(year, event, 'Q')
+        if str(session.event['EventName']) == event:
+            session.load(laps=False, telemetry=False, weather=False, messages=False)
+            res = session.results
+            if res is not None and not res.empty and res['Position'].notna().any():
+                return {str(a): int(p) for a, p in zip(res['Abbreviation'], res['Position']) if pd.notna(p)}
+    except Exception:
+        pass
+    try:
+        import urllib.request
+        url = f'https://api.jolpi.ca/ergast/f1/{year}/{rnd}/qualifying.json'
+        req = urllib.request.Request(url, headers={'User-Agent': 'formula-forecast'})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            races = json.load(r)['MRData']['RaceTable']['Races']
+        if races and event in races[0]['raceName'] and races[0]['QualifyingResults']:   # e.g. 'Bahrain Grand Prix in Malaysia'
+            return {q['Driver']['code']: int(q['position']) for q in races[0]['QualifyingResults']}
+    except Exception:
+        pass
+    return None
+
+
+def save_next_qualifying(year: int):
+    """Race results only get saved once a race has been run, so between qualifying
+    and the race the qualifying result would otherwise be lost. Save it for the NEXT
+    race to data/next_quali_<year>.json (used by rebuild/ to predict with the real
+    grid); remove the file when there's nothing valid to save."""
+    out = Path('data') / f'next_quali_{year}.json'
+    schedule_path = Path('data') / f'schedule_{year}.json'
+    upcoming = []
+    if schedule_path.exists():
+        done = set(pd.read_csv(Path('data') / 'test_data.csv').query('Year == @year')['RoundNumber'])
+        upcoming = sorted((s['RoundNumber'], s['EventName'])
+                          for s in json.loads(schedule_path.read_text(encoding='utf-8'))
+                          if s['Year'] == year and s['RoundNumber'] not in done)
+    positions = fetch_qualifying(year, *upcoming[0]) if upcoming else None
+    if not positions:
+        out.unlink(missing_ok=True)
+        print('\nNext race qualifying: ' + (f'R{upcoming[0][0]} {upcoming[0][1]} not run yet'
+                                           if upcoming else 'no upcoming race'))
+        return
+    rnd, event = upcoming[0]
+    out.write_text(json.dumps({'Year': year, 'RoundNumber': rnd, 'EventName': event,
+                               'positions': positions}, indent=1), encoding='utf-8')
+    print(f'\nNext race qualifying saved: {year} R{rnd} {event} ({len(positions)} drivers) -> {out}')
+
+
 def main():
     """Main function to collect and organize F1 data."""
     import sys
@@ -1449,11 +1504,15 @@ def main():
         training_df, test_df = organize_data(training_years, test_years,
                                              force_refresh=force_refresh,
                                              force_reorganize=force_reorganize)
+        if training_df is not None:
+            save_data(training_df, test_df)
+
+        # qualifying for the next race (after qualifying, before the race)
+        save_next_qualifying(test_years[-1])
+
         if training_df is None:
             print("\nData collection complete (no changes - feature CSVs untouched).")
             return
-
-        save_data(training_df, test_df)
 
         print("\nData collection complete!")
         print(f"\nTraining data summary:")

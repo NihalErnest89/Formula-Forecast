@@ -1,0 +1,22 @@
+{
+  "features": [
+    "ActualGridPosition",
+    "PointsShare",
+    "TrackAvgShrunk",
+    "ConstructorStanding",
+    "RecentFormFin",
+    "TrackType"
+  ],
+  "medians": {
+    "ActualGridPosition": 10.0,
+    "PointsShare": 0.10606060606060606,
+    "TrackAvgShrunk": 9.06060606060606,
+    "ConstructorStanding": 5.0,
+    "RecentFormFin": 9.5,
+    "TrackType": 0.0
+  },
+  "hidden": [
+    64,
+    32
+  ]
+}

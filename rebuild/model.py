@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from config import DEVICE, FEATURE_COLS, HIDDEN, OUT
+from config import DEVICE, HIDDEN
 
 # ---------------------------------------------------------------------------
 # 6. the model
@@ -68,7 +68,7 @@ def permutation_importance(model, df, X, repeats=5):
     return np.array(importance)
 
 
-def evaluate(model, test_data, X_test):
+def evaluate(model, test_data, X_test, grid_col):
     model.eval()
     with torch.no_grad():
         preds = model(torch.FloatTensor(X_test)).squeeze().numpy()
@@ -76,7 +76,7 @@ def evaluate(model, test_data, X_test):
     df = test_data.copy()
     df['pred'] = preds
     df['pred_rank'] = df.groupby(['Year', 'RoundNumber'])['pred'].rank(method='first')
-    df['grid_rank'] = df.groupby(['Year', 'RoundNumber'])['ActualGridPosition'].rank(method='first')
+    df['grid_rank'] = df.groupby(['Year', 'RoundNumber'])[grid_col].rank(method='first')
 
     df['err'] = (df['pred_rank'] - df['ActualPosition']).abs()
     df['gerr'] = (df['grid_rank'] - df['ActualPosition']).abs()
@@ -104,10 +104,13 @@ def evaluate(model, test_data, X_test):
     return df
 
 
-def show_weights(model, feature_cols):
+def weight_shares(model, feature_cols):
     w = model[0].weight.detach().abs().mean(dim=0)
-    s = pd.Series(w / w.sum(), index=feature_cols)
-    print(s.sort_values(ascending=False).to_string())
+    return pd.Series(w / w.sum(), index=feature_cols)
+
+
+def show_weights(model, feature_cols):
+    print(weight_shares(model, feature_cols).sort_values(ascending=False).to_string())
 
 
 # ---------------------------------------------------------------------------
@@ -118,37 +121,40 @@ def show_weights(model, feature_cols):
 # scaled features at predict time and get garbage. the feature list and hidden
 # sizes go in too, so load_artifacts can rebuild the exact architecture.
 
-def save_artifacts(model, scaler, medians):
-    OUT.mkdir(exist_ok=True)
+def save_artifacts(model, scaler, medians, spec):
+    folder = spec['dir']
+    folder.mkdir(parents=True, exist_ok=True)
 
-    torch.save(model.state_dict(), OUT / 'model.pth')
+    torch.save(model.state_dict(), folder / 'model.pth')
 
-    with open(OUT / 'scaler.pkl', 'wb') as f:
+    with open(folder / 'scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
-    with open(OUT / 'meta.json', 'w') as f:
+    with open(folder / 'meta.json', 'w') as f:
         json.dump({
-            'features': FEATURE_COLS,
+            'features': spec['features'],
             'medians': medians.to_dict(),
             'hidden': HIDDEN,
         }, f, indent=2)
 
-    print(f'  saved to {OUT}')
+    print(f'  saved to {folder}')
 
 
-def load_artifacts():
-    with open(OUT / 'meta.json') as f:
+
+def load_artifacts(spec):
+    folder = spec['dir']
+    with open(folder / 'meta.json') as f:
         meta = json.load(f)
 
-    with open(OUT / 'scaler.pkl', 'rb') as f:
+    with open(folder / 'scaler.pkl', 'rb') as f:
         scaler = pickle.load(f)
 
     model = build_model(len(meta['features']), meta['hidden'])
-    model.load_state_dict(torch.load(OUT / 'model.pth', map_location=DEVICE))
+    model.load_state_dict(torch.load(folder / 'model.pth', map_location=DEVICE))
     model.eval()
 
     # medians came back as a plain dict -- put it back in the shape fillna wants
     medians = pd.Series(meta['medians'])
 
-    print(f'  loaded from {OUT}')
+    print(f'  loaded from {folder}')
     return model, scaler, medians

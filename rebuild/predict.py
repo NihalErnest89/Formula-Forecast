@@ -4,9 +4,9 @@ import os
 import sys
 
 import torch
-from config import DATA_DIR, DEFAULT_YEAR, FEATURE_COLS, OUT, TEST_YEARS
-from data import filter_races, load_data, make_X, split_years
-from model import evaluate, load_artifacts, permutation_importance, show_weights
+from config import DATA_DIR, DEFAULT_YEAR, MODELS, TEST_YEARS
+from data import filter_races, load_data, make_X, next_race, split_years
+from model import evaluate, load_artifacts, permutation_importance, weight_shares
 from train import main as train_main
 import pandas as pd
 
@@ -19,9 +19,9 @@ import pandas as pd
 # scale with the LOADED scaler (not a new one), predict, then rank within the
 # race. no groupby needed here -- it's a single race, so the group is implicit.
 
-def predict_race(model, scaler, medians, race_df):
+def predict_race(model, scaler, medians, race_df, features):
     race = race_df.copy()
-    X = make_X(race, medians, scaler)
+    X = make_X(race, medians, scaler, features)
 
     model.eval()
     with torch.no_grad():
@@ -51,23 +51,22 @@ def ask_yes_no(question, default=False):
     return answer.startswith('y')
 
 
-def ask_race(test_data):
-    """Prompt for year + round, re-asking until it names a race we actually have."""
-    available = test_data.groupby('Year')['RoundNumber'].agg(['min', 'max'])
-    schedule = (test_data[['Year', 'RoundNumber', 'EventName']]
-                .drop_duplicates()
-                .sort_values(['Year', 'RoundNumber']))
-    print('\navailable races:')
-    for year, races in schedule.groupby('Year'):
-        print(f'  {year}:')
-        for _, r in races.iterrows():
-            print(f'    R{int(r["RoundNumber"]):<3} {r["EventName"]}')
-
-    if not sys.stdin.isatty():
-        year = int(available.index[-1])
-        rnd = int(available.iloc[-1]['max'])
-        print(f'  (not a terminal, defaulting to {year} round {rnd})')
-        return test_data[(test_data['Year'] == year) & (test_data['RoundNumber'] == rnd)], year, rnd
+def ask_race(test_data, next_df=None):
+    """List this season's races, each labelled with the model it uses, and ask for
+    a round. Returns (race rows, year, round, model name)."""
+    year = DEFAULT_YEAR
+    done = test_data[test_data['Year'] == year]
+    print(f'\n{year} races:')
+    for rnd, event in done[['RoundNumber', 'EventName']].drop_duplicates().itertuples(index=False):
+        print(f'  R{int(rnd):<3} {event:<28} [qualifying known  -> post-quali model]')
+    next_round, next_model = None, None
+    if next_df is not None and len(next_df):
+        next_round = int(next_df['RoundNumber'].iloc[0])
+        if next_df['ActualGridPosition'].notna().all():      # qualifying saved by collect_data.py
+            next_model, label = 'postquali', '[qualifying known  -> post-quali model, race not run yet]'
+        else:
+            next_model, label = 'prequali', '[no qualifying yet -> pre-quali model, a projection]'
+        print(f'  R{next_round:<3} {next_df["EventName"].iloc[0]:<28} {label}')
 
     while True:
         try:
@@ -75,13 +74,42 @@ def ask_race(test_data):
         except ValueError:
             print('  numbers only, try again')
             continue
-        
-        year = DEFAULT_YEAR
-        race = test_data[(test_data['Year'] == year) & (test_data['RoundNumber'] == rnd)]
-        if race.empty:
-            print(f'  no race found for {year} round {rnd}')
-            continue
-        return race, year, rnd
+
+        race = done[done['RoundNumber'] == rnd]
+        if len(race):
+            return race, year, rnd, 'postquali'
+        if rnd == next_round:
+            return next_df, year, rnd, next_model
+        print(f'  no race found for {year} round {rnd}')
+
+
+# ---------------------------------------------------------------------------
+# evaluate both models
+# ---------------------------------------------------------------------------
+# same layout as train.py's summary: each model's scores on the test season,
+# then importance and weight tables with one column per model.
+
+def evaluate_both(test_df):
+    loaded, importance, weights = {}, {}, {}
+    for name, spec in MODELS.items():
+        model, scaler, medians = load_artifacts(spec)
+        features = spec['features']
+        X = make_X(test_df, medians, scaler, features)
+
+        print(f'\n=============== {name} model on {TEST_YEARS} ===============')
+        evaluate(model, test_df, X, spec['grid'])
+
+        grid_label = {spec['grid']: 'grid (real / projected)'}
+        importance[name] = pd.Series(permutation_importance(model, test_df, X), index=features).rename(grid_label)
+        weights[name] = weight_shares(model, features).rename(grid_label)
+        loaded[name] = (model, scaler, medians)
+
+    for title, per_model in [('feature importance', importance), ('first-layer weight share', weights)]:
+        table = pd.DataFrame(per_model)
+        print(f'\n{title}:')
+        print(table.sort_values(table.columns[0], ascending=False).round(3).to_string())
+    return loaded
+
 
 # Update races
 def collect_races():
@@ -103,41 +131,39 @@ def collect_races():
 # ---------------------------------------------------------------------------
 
 def main():
-    cols = ['DriverName', 'pred', 'pred_rank', 'ActualPosition'] + FEATURE_COLS
-    saved = (OUT / 'model.pth').exists()
+    saved = all((s['dir'] / 'model.pth').exists() for s in MODELS.values())
     if not saved:
         print('no saved model -- run python train.py first')
         train_main()
     elif '--train' in sys.argv or ask_yes_no('saved model found. retrain it?'):
         train_main()
 
-    model, scaler, medians = load_artifacts()
 
+    upcoming = next_race(DEFAULT_YEAR)          # (year, round, event) or None
     print('loading data...')
-    df = filter_races(load_data())
+    full = load_data(upcoming)
+    df = filter_races(full)                     # drops the next race's rows (no result yet)
     test_df = split_years(df, TEST_YEARS)
+    next_df = None
+    if upcoming:
+        next_df = full[(full['Year'] == upcoming[0]) & (full['RoundNumber'] == upcoming[1])]
     print(f'  {len(test_df)} test rows ({TEST_YEARS})')
 
-    print(f'\nevaluating on {TEST_YEARS}...')
-    evaluate(model, test_df, make_X(test_df, medians, scaler))
-
-    print("\nRaw weights:")
-    show_weights(model, FEATURE_COLS)
-    importance = permutation_importance(model, test_df, make_X(test_df, medians, scaler))
-
-    print("\nImportance Table:")
-    print(pd.Series(importance, index=FEATURE_COLS).sort_values(ascending=False).round(3).to_string())
-
-
+    loaded = evaluate_both(test_df)
 
     
     choice = input('1. Predict a race\n2. Update races:\n')
     if choice == '1':
         while True:
-            race, year, rnd = ask_race(test_df)
-            print(f"\npredicting {year} round {rnd} ({race['EventName'].iloc[0]})...")
-            result = predict_race(model, scaler, medians, race)
+            race, year, rnd, name = ask_race(test_df, next_df)
+            model, scaler, medians = loaded[name]
+            features = MODELS[name]['features']
+            print(f"\npredicting {year} round {rnd} ({race['EventName'].iloc[0]}) with the {name} model...")
+            result = predict_race(model, scaler, medians, race, features)
+            cols = ['DriverName', 'pred', 'pred_rank', 'ActualPosition'] + features
             print(result[cols].round(2).to_string(index=False))
+            if not ask_yes_no('\npredict another race?', default=True):
+                break
     elif choice == '2':
         collect_races()
     else:

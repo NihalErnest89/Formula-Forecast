@@ -4,6 +4,35 @@ Scores below are 8-season cross-validation (train on 7 of 2018–2025, test on t
 8th, repeat), top-10 error in places — lower is better. A change only counts if it
 wins in most of the 8 seasons; differences under ~0.02 are noise.
 
+## 2026-10-07
+
+### Rebuild: two models + the next race
+- **Pre-qualifying model** alongside the post-quali one. Same 6 features with the
+  real grid swapped for `ProjectedGrid` (average real grid this season so far; last
+  season's at round 1 — collect_data's `GridPosition` copied the race's own grid at
+  round 1, a leak). Both live in `config.MODELS`; `train.py` trains both into
+  `saved/postquali/` and `saved/prequali/` and prints a side-by-side summary;
+  `predict.py` evaluates both. CV: post-quali 1.780, pre-quali 2.311 (beats form
+  order 2.418 in 6/8 seasons).
+- **Previously rejected features re-tested for pre-quali** (track category, team form
+  at track type, overtaking difficulty, track affinity, constructor/driver track
+  averages, wins): none clears the bar, alone or combined (best −0.017, 5/8).
+- **Predicting the next race:** `data.next_race` finds the first calendar round
+  without results; `placeholder_rows` adds it (standings carried forward, checked
+  exact) before `add_features`, so its features are walk-forward like any race.
+  Predictions further ahead are near-identical by design (nothing new is known), so
+  only the next race is offered.
+- **Race list labels the model per round:** completed → post-quali; next race →
+  pre-quali ("a projection"), or post-quali once its qualifying is saved.
+
+### Data (`collect_data.py`)
+- **Next race's qualifying saved** to `data/next_quali_<year>.json` after qualifying
+  and before the race (race results only get saved once the race is run). FastF1
+  first, with an event-name check (its degraded calendar once returned Hungary for
+  Singapore); Jolpica by round as fallback. File removed when there's nothing valid.
+  Qualifying order stands in for the grid — penalties come later (Bahrain 2026:
+  Hadjar qualified 3rd, started 8th).
+
 ## 2026-10-06
 
 ### Rebuild (`rebuild/`)

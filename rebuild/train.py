@@ -3,9 +3,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-from config import DEVICE, MIN_DELTA, PATIENCE, TOP10_WEIGHT, TRAIN_YEARS, FEATURE_COLS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS
+from config import DEVICE, MIN_DELTA, PATIENCE, TOP10_WEIGHT, TRAIN_YEARS, MODELS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS
 from data import load_data, filter_races, split_years, split_train_val, fit_preprocessing, make_X
-from model import build_model, permutation_importance, ranked_top10_mae, save_artifacts
+from model import build_model, permutation_importance, ranked_top10_mae, save_artifacts, weight_shares
 
 # ---------------------------------------------------------------------------
 # 5. dataloader
@@ -85,19 +85,19 @@ def train_model(model, X_train, y_train, epochs, val_df=None, X_val=None):
 # fit them once outside and each fold's validation season leaks into its own
 # preprocessing.
 
-def cross_validate(train_df):
+def cross_validate(train_df, features):
     curves = []
     importances = []
     for val_year in TRAIN_YEARS:
         fold_train, fold_val = split_train_val(train_df, val_year)
-        medians, scaler = fit_preprocessing(fold_train)
-        X_tr = make_X(fold_train, medians, scaler)
-        X_va = make_X(fold_val, medians, scaler)
+        medians, scaler = fit_preprocessing(fold_train, features)
+        X_tr = make_X(fold_train, medians, scaler, features)
+        X_va = make_X(fold_val, medians, scaler, features)
 
         seed_curves = []
         for seed in CV_SEEDS:
             torch.manual_seed(1000 * seed + val_year)
-            model = build_model(len(FEATURE_COLS), HIDDEN)
+            model = build_model(len(features), HIDDEN)
             _, curve = train_model(model, X_tr, fold_train['ActualPosition'].values, MAX_EPOCHS,
                                    val_df=fold_val, X_val=X_va)
             seed_curves.append(curve)
@@ -119,10 +119,22 @@ def main():
     df = filter_races(load_data())
     train_df = split_years(df, TRAIN_YEARS)
     print(f'{len(train_df)} training rows across {TRAIN_YEARS}')
+
+    # same rows for both models -- only the feature list differs
+    summaries = {}
+    for name, spec in MODELS.items():
+        summaries[name] = train_one(name, spec, train_df)
+    print_summary(summaries)
+
+
+def train_one(name, spec, train_df):
+    features = spec['features']
     print()
+    print(f'=============== {name} model ===============')
+    print(f'features: {features}')
 
     print(f'cross-validating ({MAX_EPOCHS} epochs per fold)...')
-    curves, importance = cross_validate(train_df)
+    curves, importance = cross_validate(train_df, features)
     mean_curve = curves.mean(axis=0)
     best_epochs = int(mean_curve.argmin()) + 1
 
@@ -142,16 +154,42 @@ def main():
 
     print()
     print('feature importance (extra top-10 error on held-out seasons when the feature is shuffled):')
-    print(pd.Series(importance, index=FEATURE_COLS).sort_values(ascending=False).round(3).to_string())
+    print(pd.Series(importance, index=features).sort_values(ascending=False).round(3).to_string())
 
     print()
     print(f'training final model on all {len(TRAIN_YEARS)} seasons for {best_epochs} epochs...')
     torch.manual_seed(0)
-    medians, scaler = fit_preprocessing(train_df)
-    model = build_model(len(FEATURE_COLS), HIDDEN)
-    model, _ = train_model(model, make_X(train_df, medians, scaler),
+    medians, scaler = fit_preprocessing(train_df, features)
+    model = build_model(len(features), HIDDEN)
+    model, _ = train_model(model, make_X(train_df, medians, scaler, features),
                            train_df['ActualPosition'].values, best_epochs)
-    save_artifacts(model, scaler, medians)
+    save_artifacts(model, scaler, medians, spec)
+
+    # both models' grid inputs share one label so the summary tables line up
+    grid_label = {spec['grid']: 'grid (real / projected)'}
+    return {
+        'cv': at_best,
+        'best_epoch': best_epochs,
+        'importance': pd.Series(importance, index=features).rename(grid_label),
+        'weights': weight_shares(model, features).rename(grid_label),
+    }
+
+
+def print_summary(summaries):
+    print()
+    print('=============== summary ===============')
+    for name, s in summaries.items():
+        print(f'{name:<10} CV top-10 MAE {s["cv"].mean():.3f} +/- {s["cv"].std():.3f}   (best epoch {s["best_epoch"]})')
+
+    print()
+    print('top-10 MAE per held-out season:')
+    print(pd.DataFrame({name: s['cv'] for name, s in summaries.items()}, index=TRAIN_YEARS).round(3).to_string())
+
+    for title, key in [('feature importance', 'importance'), ('first-layer weight share', 'weights')]:
+        print()
+        print(f'{title}:')
+        table = pd.DataFrame({name: s[key] for name, s in summaries.items()})
+        print(table.sort_values(table.columns[0], ascending=False).round(3).to_string())
 
 
 

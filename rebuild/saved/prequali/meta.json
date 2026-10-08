@@ -1,0 +1,22 @@
+{
+  "features": [
+    "ProjectedGrid",
+    "PointsShare",
+    "TrackAvgShrunk",
+    "ConstructorStanding",
+    "RecentFormFin",
+    "TrackType"
+  ],
+  "medians": {
+    "ProjectedGrid": 10.76923076923077,
+    "PointsShare": 0.10606060606060606,
+    "TrackAvgShrunk": 9.06060606060606,
+    "ConstructorStanding": 5.0,
+    "RecentFormFin": 9.5,
+    "TrackType": 0.0
+  },
+  "hidden": [
+    64,
+    32
+  ]
+}
