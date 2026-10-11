@@ -69,3 +69,7 @@ desktop.ini
 *.bak
 *~
 
+
+# local backup copies -- never commit
+data - Copy/
+data/pre_2025_move_backup/

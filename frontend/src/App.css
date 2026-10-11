@@ -627,6 +627,7 @@
   font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
+  text-shadow: none;   /* don't inherit the photo-readability shadow from .race-details */
 }
 
 .race-info p.model-note {

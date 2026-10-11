@@ -3,7 +3,7 @@ import React from 'react';
 const TABS = [
   { key: 'predictions', label: 'Predictions' },
   { key: 'standings', label: 'Standings' },
-  { key: 'simulator', label: 'Simulator' },
+  // { key: 'simulator', label: 'Simulator' },   // disabled for now -- uncomment to bring it back
   { key: 'about', label: 'About' },
 ];
 

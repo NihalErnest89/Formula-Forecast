@@ -3,7 +3,7 @@ import './App.css';
 import { useRaces } from './hooks/useRaces';
 import NavTabs from './components/NavTabs';
 import PredictionsView from './components/PredictionsView';
-import SimulatorView from './components/SimulatorView';
+// import SimulatorView from './components/SimulatorView';   // simulator disabled for now
 import StandingsView from './components/StandingsView';
 
 function AboutView() {
@@ -42,13 +42,6 @@ function AboutView() {
           points from the pre-qualifying model's projection of every remaining race (as if the
           season continues as it is), accumulated into a final championship order. Movement arrows show how the projection differs from the current standings.
         </p>
-        <h3>Simulator</h3>
-        <p>
-          Each prediction stores a continuous pace score per driver. The simulator treats that score
-          as the centre of a driver's race-day pace and runs thousands of Monte Carlo races &mdash;
-          adding variance for weather and reliability &mdash; to estimate Win, Podium and Points
-          probabilities. Drag the pace sliders for instant "what-if" scenarios.
-        </p>
       </div>
     </div>
   );
@@ -77,9 +70,10 @@ function App() {
         {activeTab === 'standings' && (
           <StandingsView uniqueYears={uniqueYears} />
         )}
+        {/* simulator disabled for now:
         {activeTab === 'simulator' && (
           <SimulatorView races={races} uniqueYears={uniqueYears} />
-        )}
+        )} */}
         {activeTab === 'about' && <AboutView />}
       </main>
 
