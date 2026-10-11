@@ -1433,7 +1433,10 @@ def fetch_qualifying(year: int, rnd: int, event: str):
     try:
         session = fastf1.get_session(year, event, 'Q')
         if str(session.event['EventName']) == event:
-            session.load(laps=False, telemetry=False, weather=False, messages=False)
+            # laps + race control messages: FastF1 then builds the result itself from live
+            # timing (minutes after the session) instead of waiting for Ergast/Jolpica,
+            # which can lag by hours; the messages say which laps were deleted (track limits)
+            session.load(laps=True, telemetry=False, weather=False, messages=True)
             res = session.results
             if res is not None and not res.empty and res['Position'].notna().any():
                 return {str(a): int(p) for a, p in zip(res['Abbreviation'], res['Position']) if pd.notna(p)}

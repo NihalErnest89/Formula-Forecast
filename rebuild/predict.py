@@ -131,7 +131,7 @@ def collect_races():
 # ---------------------------------------------------------------------------
 
 def main():
-    saved = all((s['dir'] / 'model.pth').exists() for s in MODELS.values())
+    saved = all((s['dir'] / 'meta.json').exists() for s in MODELS.values())
     if not saved:
         print('no saved model -- run python train.py first')
         train_main()

@@ -12,16 +12,24 @@ function AboutView() {
       <div className="about-card">
         <h2>About Formula Forecast</h2>
         <p>
-          Formula Forecast predicts F1 finishing order with neural-network ensembles trained on
-          FastF1 data from 2018&ndash;2025 and tested on the 2026 season, which the models never see
-          in training. After qualifying, a 5-model ensemble predicts how far each driver will
-          finish from their grid slot (15 features covering form, car and track history, and
-          racecraft). Before qualifying, a second ensemble works from season form instead.
+          Formula Forecast predicts F1 finishing order with two neural networks trained on FastF1
+          data from 2018&ndash;2025 and tested on the 2026 season, which they never see in training.
+          Both use six inputs: the starting grid, share of the championship leader's points, recent
+          form (crashes excluded), constructor standing, track history and track type.
         </p>
         <p>
-          <strong>How it compares to the obvious baseline:</strong> on 2026 races, its predicted
-          order is about as accurate as simply using qualifying order, and slightly better at
-          exact positions (38% vs 36%, excluding DNFs).
+          <strong>Two models, one per stage of the weekend.</strong> Once qualifying is in, the
+          post-qualifying model uses the real starting grid. Before that, the pre-qualifying model
+          uses the driver's average grid slot this season instead, so its predictions are
+          projections. The site shows every completed race and the next one, which switches to the
+          post-qualifying model when its qualifying is saved.
+        </p>
+        <p>
+          <strong>How it compares to the obvious baseline:</strong> on 2026 races, its predicted top
+          10 is 0.09 places closer to the result on average than simply using qualifying order, and
+          gets the exact position more often (39% vs 35%); within one place the two are level (75%).
+          Excluding DNFs and large grid drops. Each prediction is the average of five networks
+          trained with different random seeds, so it doesn't hinge on one lucky or unlucky run.
         </p>
         <h3>Predictions</h3>
         <p>
@@ -31,8 +39,8 @@ function AboutView() {
         <h3>Standings</h3>
         <p>
           Projected championship standings: points already scored in completed races, plus
-          model-predicted points for every remaining race, accumulated into a final championship
-          order. Movement arrows show how the projection differs from the current standings.
+          points from the pre-qualifying model's projection of every remaining race (as if the
+          season continues as it is), accumulated into a final championship order. Movement arrows show how the projection differs from the current standings.
         </p>
         <h3>Simulator</h3>
         <p>
@@ -76,7 +84,7 @@ function App() {
       </main>
 
       <footer className="App-footer">
-        <p>Neural-network ensembles trained on FastF1 data (2018&ndash;2025) &middot; tested on 2026</p>
+        <p>Neural networks trained on FastF1 data (2018&ndash;2025) &middot; tested on 2026</p>
         <p>Created by Nihal Ernest</p>
       </footer>
     </div>

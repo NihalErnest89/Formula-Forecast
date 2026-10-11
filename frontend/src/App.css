@@ -626,6 +626,13 @@
   border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.race-info p.model-note {
+  font-size: 0.85rem;
+  opacity: 0.75;
+  margin-top: 0.35rem;
 }
 
 .loading {

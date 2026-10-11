@@ -143,7 +143,7 @@ function SimulatorView({ races, uniqueYears }) {
                 <h2>{selectedRace.eventName}</h2>
                 <p className="sim-subtitle">
                   {selectedRace.year} &middot; Round {selectedRace.roundNumber}
-                  {selectedRace.isFuture && <span className="future-badge">Future Race</span>}
+                  {selectedRace.isFuture && <span className="future-badge">Next Race</span>}
                 </p>
               </div>
               <div className="sim-meta">

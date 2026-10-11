@@ -127,7 +127,10 @@ def add_features(df):
     finish = df['ActualPosition'].where(finished)          # NaN on a retirement
 
     # PointsShare
-    points = df['SeasonPoints'].where(df['RoundNumber'] != 1, 0)
+    # from the running total of Points (race + sprint). collect_data's SeasonPoints
+    # leaves sprint points out and still counts the old fastest-lap point.
+    points = df['Points'].fillna(0).groupby([df['DriverName'], df['Year']]).transform(
+        lambda s: s.cumsum().shift(1).fillna(0))
     leader = points.groupby([df['Year'], df['RoundNumber']]).transform('max')
     df['PointsShare'] = (points / leader.replace(0, np.nan)).fillna(0)
 

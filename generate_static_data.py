@@ -1,222 +1,140 @@
 """
-Generate static JSON data files for the GitHub Pages frontend.
+Generate the static JSON files for the GitHub Pages site from the rebuild/ models.
 
-Run this after training to pre-compute all predictions:
+Run after collecting data and training (python rebuild/train.py):
     python generate_static_data.py
+
+Races shown on the site: every completed race of the test season + the NEXT race only
+(further races would get near-identical predictions - nothing new is known about them).
+  completed race  -> post-quali model (real starting grid)
+  next race       -> post-quali if its qualifying has been saved by collect_data.py,
+                     otherwise pre-quali (a projection from season form)
+The Standings page still projects the whole season: each remaining race is predicted
+behind the scenes with the pre-quali model, but only the next race gets a page.
 
 Outputs:
     frontend/public/data/races.json
     frontend/public/data/predictions/<year>-<roundNumber>.json
+    frontend/public/data/standings/<year>.json
 """
 
 import json
 import sys
 from pathlib import Path
 
-# Add repo root to path so we can import top10 modules
-sys.path.insert(0, str(Path(__file__).parent))
+import pandas as pd
+import torch
 
-from top10.model_loader import load_model, load_postquali_model, load_prequali_delta_model
-from top10.predict import predict_race_top10, predict_race_postquali
-from top10.feature_calculation import (calculate_future_race_features, add_racecraft_features,
-                                       add_overqual_features, add_elo_features,
-                                       add_affinity_features)
-from top10.data_utils import load_f1_data, build_race_list, format_predictions
+ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT / 'rebuild'))
+import data as rb                                   # noqa: E402  rebuild/data.py
+from config import MODELS, TEST_YEARS, DATA_DIR      # noqa: E402  rebuild/config.py
+from model import load_artifacts                    # noqa: E402  rebuild/model.py
 
-OUT_DIR = Path(__file__).parent / 'frontend' / 'public' / 'data'
-DATA_DIR = Path(__file__).parent / 'data'
-MODEL_DIR = Path(__file__).parent / 'models'
-CACHE_DIR = Path(__file__).parent / 'cache'
+OUT_DIR = ROOT / 'frontend' / 'public' / 'data'
+
+# F1 points system (race only; future sprint points are not modeled)
+POINTS_BY_RANK = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
 
 
 def _canon_driver(x):
-    """Normalize a driver number so 4, 4.0, '4' all map to '4'."""
+    """Normalize driver number to a string key ('4', 4.0 and 4 are the same driver)."""
     try:
         return str(int(float(x)))
     except (ValueError, TypeError):
         return str(x)
 
 
-def try_fetch_quali_grid(year, event_name):
-    """
-    For an upcoming race, check whether qualifying has already happened and
-    return {driver_number(str): grid_position} if so, else None.
+# ---------------------------------------------------------------------------
+# prediction file format (unchanged from before, so the frontend needs no changes)
+# ---------------------------------------------------------------------------
 
-    Only meaningful for the NEXT race of a season (later rounds cannot have
-    quali results yet). Failures (no session, API down, not run yet) return None.
-    """
-    try:
-        import fastf1
-        import pandas as pd
-        fastf1.Cache.enable_cache(str(CACHE_DIR))
-        session = fastf1.get_session(year, event_name, 'Q')
-        # get_session fuzzy-matches by name. If FastF1's calendar is degraded and lacks
-        # this race it silently returns a DIFFERENT one (Singapore -> Hungary's quali).
-        if str(session.event['EventName']) != event_name:
-            return None
-        session.load(laps=False, telemetry=False, weather=False, messages=False)
-        results = session.results
-        if results is None or results.empty or results['Position'].isna().all():
-            return None
-        return {
-            _canon_driver(dn): float(pos)
-            for dn, pos in zip(results['DriverNumber'], results['Position'])
-            if pd.notna(pos)
-        }
-    except Exception:
+def filter_reason(row, is_future):
+    """Why a driver is hidden in the site's filtered view, or None."""
+    if is_future or pd.isna(row.get('ActualPosition')):
         return None
+    if bool(row.get('IsDNF', False)):
+        return 'DNF/DSQ'
+    actual = int(row['ActualPosition'])
+    grid = row.get('ActualGridPosition')
+    if pd.notna(grid) and actual - float(grid) > 6:
+        return f'Dropped {int(actual - grid)} places (grid {int(grid)} → finish {actual})'
+    return None
 
 
-def generate_race_prediction(race, test_df, training_df, model, scaler, model_type, device,
-                             pq_model=None, pq_scaler=None, pq_meta=None,
-                             pre_model=None, pre_scaler=None, pre_meta=None,
-                             latest_driver_gain=None, latest_team_gain=None,
-                             latest_driver_elo=None, latest_team_elo=None):
-    year = int(race['year'])
-    event_name = race['eventName']
-    round_number = int(race['roundNumber'])
-    is_future = race.get('isFuture', False)
+def format_predictions(top10, is_future):
+    filtered, unfiltered = [], []
+    for _, row in top10.iterrows():
+        grid = row.get('ActualGridPosition')
+        if pd.isna(grid):
+            grid = row.get('GridPosition')        # future race: the projected grid
+        reason = filter_reason(row, is_future)
+        p = {
+            'rank': int(row['Rank']),
+            'driverName': str(row['DriverName']),
+            'driverNumber': int(row['DriverNumber']) if pd.notna(row.get('DriverNumber')) else None,
+            'predictedPosition': float(row['PredictedPosition']),
+            'actualPosition': int(row['ActualPosition']) if pd.notna(row.get('ActualPosition')) else None,
+            'gridPosition': int(round(grid)) if pd.notna(grid) else None,
+            'constructor': None,
+            'filterReason': reason,
+            'isFiltered': reason is not None,
+        }
+        unfiltered.append(p)
+        if reason is None:
+            filtered.append(p)
+    return filtered, unfiltered
 
-    race_df = test_df[
-        (test_df['Year'] == year) &
-        (test_df['EventName'] == event_name) &
-        (test_df['RoundNumber'] == round_number)
-    ].copy()
 
-    used_quali_grid = False
-    model_used = 'legacy'
-
-    def attach_latest(df):
-        """Attach current racecraft + Elo features (as of latest completed race)."""
-        df['DriverAvgGain'] = df['DriverName'].map(
-            lambda d: (latest_driver_gain or {}).get(str(d), 0.0))
-        df['DriverElo'] = df['DriverName'].map(
-            lambda d: (latest_driver_elo or {}).get(str(d), 1500.0))
-        if 'TeamName' in df.columns:
-            df['ConstructorAvgGain'] = df['TeamName'].map(
-                lambda t: (latest_team_gain or {}).get(str(t), 0.0))
-            df['ConstructorElo'] = df['TeamName'].map(
-                lambda t: (latest_team_elo or {}).get(str(t), 1500.0))
-        else:
-            df['ConstructorAvgGain'] = 0.0
-            df['ConstructorElo'] = 1500.0
-
-    if race_df.empty:
-        race_df = calculate_future_race_features(
-            test_df, year, round_number, event_name, training_df
-        )
-        is_future = True
-        if race_df.empty:
-            print(f"  Skipping {event_name} ({year}) — no driver data available")
-            return None
-        # Upcoming race: if this is the season's next round, qualifying may have
-        # already happened - if so, switch to actual grid + post-quali model
-        quali_grid = None
-        if pq_model is not None and race.get('isNextRound'):
-            quali_grid = try_fetch_quali_grid(year, event_name)
-        if quali_grid:
-            mapped = race_df['DriverNumber'].map(lambda d: quali_grid.get(_canon_driver(d)))
-            if mapped.notna().any():
-                # Season-average grid (the projected value) BEFORE swapping in quali grid
-                race_df['SeasonAvgGrid'] = race_df['GridPosition']
-                race_df['GridPosition'] = mapped.fillna(race_df['GridPosition'])
-                attach_latest(race_df)
-                add_overqual_features(race_df)
-                used_quali_grid = True
-                model_used = 'postquali-delta'
-                print(f"    Using ACTUAL qualifying grid (quali completed) + post-quali delta model")
-        if not used_quali_grid and pre_model is not None:
-            # Future race without quali: pre-quali delta ensemble over form order
-            attach_latest(race_df)
-            add_affinity_features(race_df)
-            model_used = 'prequali-delta'
-    else:
-        # Completed race: qualifying is known, so use the actual grid with the
-        # post-quali model (quali precedes the race - no information leakage)
-        if pq_model is not None and 'ActualGridPosition' in race_df.columns \
-                and race_df['ActualGridPosition'].notna().mean() > 0.5:
-            race_df['SeasonAvgGrid'] = race_df['GridPosition']
-            race_df['GridPosition'] = race_df['ActualGridPosition'].fillna(race_df['GridPosition'])
-            add_overqual_features(race_df)
-            used_quali_grid = True
-            model_used = 'postquali-delta'
-
-    if used_quali_grid:
-        top10, all_drivers = predict_race_postquali(race_df, pq_model, pq_scaler, pq_meta, device)
-    elif model_used == 'prequali-delta':
-        top10, all_drivers = predict_race_postquali(race_df, pre_model, pre_scaler, pre_meta, device)
-    else:
-        top10, all_drivers = predict_race_top10(race_df, model, scaler, model_type, device)
-    predictions_filtered, predictions_unfiltered = format_predictions(top10, is_future)
-
+def predict_race(rows, name, loaded, is_future):
+    """Rank every driver in the race with one model and build the race's JSON."""
+    model, scaler, medians = loaded[name]
+    feats = MODELS[name]['features']
+    with torch.no_grad():
+        scores = model(torch.FloatTensor(rb.make_X(rows, medians, scaler, feats))).squeeze(-1).numpy()
+    ranked = rows.assign(PredictedPosition=scores).sort_values('PredictedPosition')
+    ranked['Rank'] = range(1, len(ranked) + 1)
+    if name == 'prequali':
+        ranked['GridPosition'] = ranked['ProjectedGrid']     # shown as the grid before qualifying
+    filtered, unfiltered = format_predictions(ranked.head(10), is_future)
+    first = rows.iloc[0]
     return {
         'race': {
-            'year': year,
-            'eventName': event_name,
-            'roundNumber': round_number,
+            'year': int(first['Year']),
+            'eventName': str(first['EventName']),
+            'roundNumber': int(first['RoundNumber']),
             'isFuture': is_future,
-            'usedQualiGrid': used_quali_grid,
-            'modelUsed': model_used,
+            'usedQualiGrid': name == 'postquali',
+            'modelUsed': name,
         },
-        'predictionsFiltered': predictions_filtered,
-        'predictionsUnfiltered': predictions_unfiltered,
-        'totalDrivers': len(all_drivers),
+        'predictionsFiltered': filtered,
+        'predictionsUnfiltered': unfiltered,
+        'totalDrivers': len(rows),
     }
 
 
-# F1 points system (race only; future sprint points are not modeled)
-POINTS_BY_RANK = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
-
+# ---------------------------------------------------------------------------
+# standings
+# ---------------------------------------------------------------------------
 
 def generate_standings(year, test_df, predictions):
     """
-    Build championship standings for a season.
-
-    Two accumulations from the per-race prediction JSONs:
+    Championship standings for a season, from the per-race predictions.
     - predictedPoints: model points for FUTURE races -> projectedTotal/Rank
-      (current points + predicted remainder = projected championship)
     - modelPoints: model points for COMPLETED races -> modelRank
-      ("the championship the model predicted" - for finished seasons this is
-      compared against the actual final standings)
-
-    Args:
-        year: season year
-        test_df: DataFrame of completed races (test_data.csv)
-        predictions: list of this year's prediction dicts (future AND completed)
-
-    Returns:
-        dict ready to serialize as standings/<year>.json
     """
     season = test_df[test_df['Year'] == year].copy()
     if season.empty:
         return None
     season['_dn'] = season['DriverNumber'].apply(_canon_driver)
 
-    # Actual points per driver (Points column = race + sprint, source of truth)
     drivers = {}
     for dn, grp in season.groupby('_dn'):
         latest = grp.sort_values('RoundNumber').iloc[-1]
-        drivers[dn] = {
-            'driverNumber': dn,
-            'driverName': latest.get('DriverName', 'UNK'),
-            'teamName': latest.get('TeamName', ''),
-            'currentPoints': float(grp['Points'].fillna(0).sum()),
-            'predictedPoints': 0.0,
-            'modelPoints': 0.0,
-        }
-
-    def _driver_entry(p):
-        dn = _canon_driver(p.get('driverNumber'))
-        if dn not in drivers:
-            drivers[dn] = {
-                'driverNumber': dn,
-                'driverName': p.get('driverName', 'UNK'),
-                'teamName': p.get('constructor') or '',
-                'currentPoints': 0.0,
-                'predictedPoints': 0.0,
-                'modelPoints': 0.0,
-            }
-        return drivers[dn]
+        drivers[dn] = {'driverNumber': dn, 'driverName': latest.get('DriverName', 'UNK'),
+                       'teamName': latest.get('TeamName', ''),
+                       'currentPoints': float(grp['Points'].fillna(0).sum()),
+                       'predictedPoints': 0.0, 'modelPoints': 0.0}
 
     n_future = 0
     for pred in predictions:
@@ -226,130 +144,97 @@ def generate_standings(year, test_df, predictions):
             pts = POINTS_BY_RANK.get(p.get('rank'))
             if pts is None:
                 continue
-            entry = _driver_entry(p)
-            if is_future:
-                entry['predictedPoints'] += pts   # projection of the remainder
-            else:
-                entry['modelPoints'] += pts       # what the model predicted pre-race
+            dn = _canon_driver(p.get('driverNumber'))
+            entry = drivers.setdefault(dn, {'driverNumber': dn, 'driverName': p.get('driverName', 'UNK'),
+                                            'teamName': '', 'currentPoints': 0.0,
+                                            'predictedPoints': 0.0, 'modelPoints': 0.0})
+            entry['predictedPoints' if is_future else 'modelPoints'] += pts
 
     rows = list(drivers.values())
     for r in rows:
         r['projectedTotal'] = r['currentPoints'] + r['predictedPoints']
-
-    # Ranks: current (actual points so far), projected (with predicted future
-    # races), and model (championship built purely from per-race predictions)
-    for key, rank_field in (('currentPoints', 'currentRank'),
-                            ('projectedTotal', 'projectedRank'),
+    for key, rank_field in (('currentPoints', 'currentRank'), ('projectedTotal', 'projectedRank'),
                             ('modelPoints', 'modelRank')):
         for i, r in enumerate(sorted(rows, key=lambda x: -x[key]), 1):
             r[rank_field] = i
-
     rows.sort(key=lambda r: -r['projectedTotal'])
 
-    completed_rounds = sorted(int(x) for x in season['RoundNumber'].unique())
     return {
         'year': int(year),
-        'completedRounds': len(completed_rounds),
+        'completedRounds': int(season['RoundNumber'].nunique()),
         'remainingRounds': n_future,
         'seasonComplete': n_future == 0,
         'note': 'Projected totals = actual points from completed races + model-predicted points '
-                '(25-18-15-...-1) for each remaining race. Model points = the same points system '
-                'applied to the model\'s pre-race predictions of completed races. '
-                'Sprint points are not modeled.',
+                '(25-18-15-...-1) for each remaining race (pre-qualifying projections, as if the '
+                'season continues as it is). Model points = the same points system applied to the '
+                "model's predictions of completed races. Sprint points are not modeled.",
         'standings': rows,
     }
 
 
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
 def main():
-    print("Loading model...")
-    model, scaler, model_type, device = load_model(str(MODEL_DIR), 'neural_network')
-    print(f"  Model loaded ({model_type}, device={device})")
+    year = max(TEST_YEARS)
+    print('Loading models...')
+    loaded = {name: load_artifacts(spec) for name, spec in MODELS.items()}
 
-    pq_model, pq_scaler, pq_meta = load_postquali_model(str(MODEL_DIR))
-    if pq_model is None:
-        print("  No post-quali model found - completed races will use the average-grid model.")
-        print("  (Retrain with 'python top10/train.py' to enable post-quali predictions.)")
-    pre_model, pre_scaler, pre_meta = load_prequali_delta_model(str(MODEL_DIR))
-    if pre_model is None:
-        print("  No pre-quali delta model found - future races will use the legacy model.")
+    test_df = pd.read_csv(DATA_DIR / 'test_data.csv')
+    base = pd.concat([pd.read_csv(DATA_DIR / 'training_data.csv'), test_df], ignore_index=True)
+    done = sorted(int(r) for r in test_df.loc[test_df['Year'] == year, 'RoundNumber'].unique())
+    schedule = json.loads((DATA_DIR / f'schedule_{year}.json').read_text(encoding='utf-8'))
+    remaining = sorted((s['RoundNumber'], s['EventName']) for s in schedule
+                       if s['Year'] == year and s['RoundNumber'] not in done)
 
-    print("Loading data...")
-    test_df, training_df = load_f1_data(DATA_DIR)
-    if test_df is None:
-        print("ERROR: test_data.csv not found. Run data collection first.")
-        sys.exit(1)
+    # every remaining round gets placeholder rows (state after the latest race) before
+    # the features are computed; only the next one can carry a saved qualifying grid
+    placeholders = [rb.placeholder_rows(base, year, rnd, event) for rnd, event in remaining]
+    rows = rb.add_features(pd.concat([base] + placeholders, ignore_index=True))
+    season = rows[rows['Year'] == year]
 
-    # Walk-forward racecraft + Elo features (also yields CURRENT values for future races)
-    latest_driver_gain, latest_team_gain = {}, {}
-    latest_driver_elo, latest_team_elo = {}, {}
-    if pq_model is not None or pre_model is not None:
-        _, latest_driver_gain, latest_team_gain = add_racecraft_features([training_df, test_df])
-        _, latest_driver_elo, latest_team_elo = add_elo_features([training_df, test_df])
+    races, predictions = [], []
+    for rnd in done:
+        predictions.append(predict_race(season[season['RoundNumber'] == rnd], 'postquali', loaded, False))
+    for i, (rnd, event) in enumerate(remaining):
+        r = season[season['RoundNumber'] == rnd]
+        name = 'postquali' if (i == 0 and r['ActualGridPosition'].notna().all()) else 'prequali'
+        predictions.append(predict_race(r, name, loaded, True))
 
-    races_list = build_race_list(test_df)
+    # pages: completed races + the next race (newest first, like before)
+    shown = [p for p in predictions if not p['race']['isFuture']] + \
+            [p for p in predictions if p['race']['isFuture']][:1]
+    shown.sort(key=lambda p: -p['race']['roundNumber'])
+    next_round = remaining[0][0] if remaining else None
 
-    # Mark each season's next upcoming round: it is the only future race whose
-    # qualifying could already have results worth probing for
-    next_rounds = {}
-    for r in races_list:
-        if r.get('isFuture'):
-            yr = r['year']
-            if yr not in next_rounds or r['roundNumber'] < next_rounds[yr]:
-                next_rounds[yr] = r['roundNumber']
-    for r in races_list:
-        r['isNextRound'] = bool(r.get('isFuture')) and next_rounds.get(r['year']) == r['roundNumber']
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
     predictions_dir = OUT_DIR / 'predictions'
-    predictions_dir.mkdir(exist_ok=True)
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    keep = set()
+    for p in shown:
+        race = p['race']
+        name = f"{race['year']}-{race['roundNumber']}.json"
+        (predictions_dir / name).write_text(json.dumps(p), encoding='utf-8')
+        keep.add(name)
+        races.append({'year': race['year'], 'eventName': race['eventName'], 'roundNumber': race['roundNumber'],
+                      'isFuture': race['isFuture'], 'isNextRound': race['roundNumber'] == next_round,
+                      'model': race['modelUsed']})
+    stale = [f for f in predictions_dir.glob('*.json') if f.name not in keep]
+    for f in stale:
+        f.unlink()
+    (OUT_DIR / 'races.json').write_text(json.dumps({'races': races}), encoding='utf-8')
+    print(f"Wrote {len(shown)} race pages ({len(done)} completed + next race), removed {len(stale)} old ones")
+    if remaining:
+        print(f"  next race: R{next_round} {remaining[0][1]} -> {shown[0]['race']['modelUsed']} model")
 
-    races_path = OUT_DIR / 'races.json'
-    with open(races_path, 'w') as f:
-        json.dump({'races': races_list}, f)
-    print(f"Wrote {races_path} ({len(races_list)} races)")
-
-    ok = 0
-    skipped = 0
-    preds_by_year = {}
-    for race in races_list:
-        future_tag = ' [FUTURE]' if race['isFuture'] else ''
-        print(f"  Predicting: {race['eventName']} ({race['year']}, Round {race['roundNumber']}){future_tag}...")
-        try:
-            data = generate_race_prediction(race, test_df, training_df, model, scaler, model_type, device,
-                                            pq_model=pq_model, pq_scaler=pq_scaler, pq_meta=pq_meta,
-                                            pre_model=pre_model, pre_scaler=pre_scaler, pre_meta=pre_meta,
-                                            latest_driver_gain=latest_driver_gain,
-                                            latest_team_gain=latest_team_gain,
-                                            latest_driver_elo=latest_driver_elo,
-                                            latest_team_elo=latest_team_elo)
-            if data is None:
-                skipped += 1
-                continue
-            out_path = predictions_dir / f"{race['year']}-{race['roundNumber']}.json"
-            with open(out_path, 'w') as f:
-                json.dump(data, f)
-            ok += 1
-            preds_by_year.setdefault(race['year'], []).append(data)
-        except Exception as e:
-            print(f"    ERROR: {e}")
-            skipped += 1
-
-    # Projected championship standings per season
     standings_dir = OUT_DIR / 'standings'
     standings_dir.mkdir(exist_ok=True)
-    years = sorted({r['year'] for r in races_list})
-    for year in years:
-        standings = generate_standings(year, test_df, preds_by_year.get(year, []))
-        if standings is None:
-            continue
-        with open(standings_dir / f'{year}.json', 'w') as f:
-            json.dump(standings, f)
-        leader = standings['standings'][0]
-        print(f"  Standings {year}: {standings['completedRounds']} done + {standings['remainingRounds']} predicted; "
-              f"projected champion: {leader['driverName']} ({leader['projectedTotal']:.0f} pts)")
-
-    print(f"\nDone. {ok} predictions written, {skipped} skipped.")
-    print(f"Output: {OUT_DIR}")
+    standings = generate_standings(year, test_df, predictions)
+    (standings_dir / f'{year}.json').write_text(json.dumps(standings), encoding='utf-8')
+    leader = standings['standings'][0]
+    print(f"  Standings {year}: {standings['completedRounds']} done + {standings['remainingRounds']} projected; "
+          f"projected champion: {leader['driverName']} ({leader['projectedTotal']:.0f} pts)")
+    print(f'Done. Output: {OUT_DIR}')
 
 
 if __name__ == '__main__':

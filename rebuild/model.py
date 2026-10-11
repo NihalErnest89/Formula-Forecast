@@ -104,8 +104,20 @@ def evaluate(model, test_data, X_test, grid_col):
     return df
 
 
+class Ensemble(nn.Module):
+    """Several models trained with different seeds; predicts their average.
+    Behaves like one model, so evaluate / importance / predict need no changes."""
+    def __init__(self, models):
+        super().__init__()
+        self.models = nn.ModuleList(models)
+
+    def forward(self, x):
+        return torch.stack([m(x) for m in self.models]).mean(dim=0)
+
+
 def weight_shares(model, feature_cols):
-    w = model[0].weight.detach().abs().mean(dim=0)
+    members = model.models if isinstance(model, Ensemble) else [model]
+    w = torch.stack([m[0].weight.detach().abs().mean(dim=0) for m in members]).mean(dim=0)
     return pd.Series(w / w.sum(), index=feature_cols)
 
 
@@ -125,7 +137,11 @@ def save_artifacts(model, scaler, medians, spec):
     folder = spec['dir']
     folder.mkdir(parents=True, exist_ok=True)
 
-    torch.save(model.state_dict(), folder / 'model.pth')
+    members = model.models if isinstance(model, Ensemble) else [model]
+    for old in folder.glob('model*.pth'):          # don't leave members of an older, bigger ensemble
+        old.unlink()
+    for i, m in enumerate(members):
+        torch.save(m.state_dict(), folder / f'model_{i}.pth')
 
     with open(folder / 'scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
@@ -135,6 +151,7 @@ def save_artifacts(model, scaler, medians, spec):
             'features': spec['features'],
             'medians': medians.to_dict(),
             'hidden': HIDDEN,
+            'n_models': len(members),
         }, f, indent=2)
 
     print(f'  saved to {folder}')
@@ -149,8 +166,12 @@ def load_artifacts(spec):
     with open(folder / 'scaler.pkl', 'rb') as f:
         scaler = pickle.load(f)
 
-    model = build_model(len(meta['features']), meta['hidden'])
-    model.load_state_dict(torch.load(folder / 'model.pth', map_location=DEVICE))
+    members = []
+    for i in range(meta.get('n_models', 1)):
+        m = build_model(len(meta['features']), meta['hidden'])
+        m.load_state_dict(torch.load(folder / f'model_{i}.pth', map_location=DEVICE))
+        members.append(m)
+    model = Ensemble(members)
     model.eval()
 
     # medians came back as a plain dict -- put it back in the shape fillna wants

@@ -39,3 +39,7 @@ MIN_DELTA = 0.01
 DEFAULT_YEAR = 2026
 
 TOP10_WEIGHT = 2.0
+
+# final model = the average of one model per seed. a single model's score swung
+# +/-0.03 with its seed alone; the average beat a single model in 6-8 of 8 seasons.
+ENSEMBLE_SEEDS = [0, 1, 2, 3, 4]

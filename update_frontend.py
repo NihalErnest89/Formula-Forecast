@@ -4,7 +4,7 @@ One-command pipeline to bring the GitHub Pages frontend up to date.
 Steps:
   1. collect_data.py          - incremental: only fetches races newer than the
                                 data/raw/ snapshots (seconds if nothing new)
-  2. top10/train.py           - retrain the model on the refreshed data
+  2. rebuild/train.py         - retrain both models (post- and pre-qualifying)
   3. generate_static_data.py  - precompute races.json + per-race prediction JSONs
   4. npm run deploy           - build the React app and push to the gh-pages branch
 
@@ -42,7 +42,7 @@ def main():
     if skip_train:
         print("\nSkipping training (--skip-train): reusing existing model")
     else:
-        run_step("Retrain model", [sys.executable, str(ROOT / 'top10' / 'train.py')])
+        run_step("Retrain models (post- and pre-qualifying)", [sys.executable, str(ROOT / 'rebuild' / 'train.py')])
 
     run_step("Generate static prediction data", [sys.executable, 'generate_static_data.py'])
 

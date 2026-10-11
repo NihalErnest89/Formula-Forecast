@@ -71,7 +71,12 @@ function PredictionsView({ races, uniqueYears }) {
             <h2>{predictions.race.eventName}</h2>
             <p>
               {predictions.race.year} - Round {predictions.race.roundNumber}
-              {predictions.race.isFuture && <span className="future-badge">Future Race</span>}
+              {predictions.race.isFuture && <span className="future-badge">Next Race</span>}
+            </p>
+            <p className="model-note">
+              {predictions.race.modelUsed === 'prequali'
+                ? 'Pre-qualifying projection: no grid yet, so it works from season form. It updates once qualifying is in.'
+                : 'Post-qualifying model: uses the real starting grid.'}
             </p>
 
             {!predictions.race.isFuture && (

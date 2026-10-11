@@ -3,9 +3,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-from config import DEVICE, MIN_DELTA, PATIENCE, TOP10_WEIGHT, TRAIN_YEARS, MODELS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS
+from config import DEVICE, MIN_DELTA, PATIENCE, TOP10_WEIGHT, TRAIN_YEARS, MODELS, HIDDEN, BATCH_SIZE, LR, MAX_EPOCHS, CV_SEEDS, ENSEMBLE_SEEDS
 from data import load_data, filter_races, split_years, split_train_val, fit_preprocessing, make_X
-from model import build_model, permutation_importance, ranked_top10_mae, save_artifacts, weight_shares
+from model import Ensemble, build_model, permutation_importance, ranked_top10_mae, save_artifacts, weight_shares
 
 # ---------------------------------------------------------------------------
 # 5. dataloader
@@ -157,12 +157,16 @@ def train_one(name, spec, train_df):
     print(pd.Series(importance, index=features).sort_values(ascending=False).round(3).to_string())
 
     print()
-    print(f'training final model on all {len(TRAIN_YEARS)} seasons for {best_epochs} epochs...')
-    torch.manual_seed(0)
+    print(f'training final model ({len(ENSEMBLE_SEEDS)} seeds, averaged) on all {len(TRAIN_YEARS)} seasons '
+          f'for {best_epochs} epochs...')
     medians, scaler = fit_preprocessing(train_df, features)
-    model = build_model(len(features), HIDDEN)
-    model, _ = train_model(model, make_X(train_df, medians, scaler, features),
-                           train_df['ActualPosition'].values, best_epochs)
+    X_all, y_all = make_X(train_df, medians, scaler, features), train_df['ActualPosition'].values
+    members = []
+    for seed in ENSEMBLE_SEEDS:
+        torch.manual_seed(seed)
+        member, _ = train_model(build_model(len(features), HIDDEN), X_all, y_all, best_epochs)
+        members.append(member)
+    model = Ensemble(members)
     save_artifacts(model, scaler, medians, spec)
 
     # both models' grid inputs share one label so the summary tables line up

@@ -109,7 +109,16 @@ function RaceSelector({
                   <span className="race-name">{race.eventName}</span>
                   <span className="race-details">
                     {race.year} - Round {race.roundNumber}
-                    {race.isFuture && <span className="future-badge">F</span>}
+                    {race.isFuture && (
+                      <span
+                        className="future-badge"
+                        title={race.model === 'postquali'
+                          ? 'Next race: qualifying is in, so the prediction uses the real grid'
+                          : 'Next race: no qualifying yet, so this is a projection from season form'}
+                      >
+                        {race.model === 'postquali' ? 'Next · quali in' : 'Next · projection'}
+                      </span>
+                    )}
                   </span>
                 </div>
                 {circuitImage && showArt && !minimized && <div className="race-button-image"></div>}

@@ -4,6 +4,39 @@ Scores below are 8-season cross-validation (train on 7 of 2018–2025, test on t
 8th, repeat), top-10 error in places — lower is better. A change only counts if it
 wins in most of the 8 seasons; differences under ~0.02 are noise.
 
+## 2026-10-10
+
+### Qualifying detection fixed
+- `fetch_qualifying` now loads live-timing laps + race control messages, so FastF1
+  builds the qualifying result minutes after the session (Ergast/Jolpica can lag by
+  hours — Singapore's wasn't published yet). Deleted laps (track limits) are excluded.
+
+### Audit fixes (deployed)
+- **5-seed ensemble** (`ENSEMBLE_SEEDS`, `model.Ensemble`): the final model is the
+  average of 5 models. A single model's site score swung ±0.03 with its seed alone;
+  the average beat a single model in 6–8 of 8 seasons for both models.
+- **`PointsShare` from Points incl. sprints** (running total of race + sprint points).
+  collect_data's `SeasonPoints` left sprints out (Antonelli 2026: 26 points) and
+  counted the old fastest-lap point.
+- Not changed: picking epochs on the full-field score gave identical results.
+- CV (single models): post-quali 1.779, pre-quali 2.307. 2026 site metric: lead over
+  qualifying order 0.076 → 0.092; exact positions 35.1% → 39.2% (qualifying order 35.4%).
+
+## 2026-10-08
+
+### Site now runs on the rebuild models (deployed)
+- `generate_static_data.py` rewritten around `rebuild/`: completed races use the
+  post-quali model; the next race uses pre-quali (or post-quali once its qualifying is
+  saved); races beyond the next no longer get pages. Standings still project the full
+  season from pre-quali projections of every remaining race. File format unchanged.
+- Frontend: next race badged "Next · projection" / "Next · quali in"; each race page
+  states which model made it. About page and footer describe the new models.
+- `update_frontend.py` retrains with `rebuild/train.py`.
+- 2026 on the site's own metric (predicted top 10, excl. DNFs / drops > 6, vs
+  qualifying order for the same drivers): new lead 0.076 places (old model 0.031);
+  exact positions 35.1% vs 35.9% (old model 38.5% vs 36.2%). Chosen for the bigger
+  lead and the simpler, understood model; the exact-position gap is the known cost.
+
 ## 2026-10-07
 
 ### Rebuild: two models + the next race
